@@ -28,6 +28,9 @@ class TerminalSession(
         private set
 
     var onSessionFinished: ((Int) -> Unit)? = null
+    var onCloseRequested: (() -> Unit)? = null
+    var exitCode: Int? = null
+        private set
     var title = "Cortex"
 
     fun start() {
@@ -78,15 +81,19 @@ class TerminalSession(
                         Log.e(tag, "Error reading from PTY: ${e.message}", e)
                     }
                 } finally {
-                    val exitCode = ptyProcess?.waitFor() ?: 0
+                    val code = ptyProcess?.waitFor() ?: 0
+                    exitCode = code
                     val duration = System.currentTimeMillis() - startTime
-                    Log.i(tag, "Process exited with code $exitCode after ${duration}ms")
+                    Log.i(tag, "Process exited with code $code after ${duration}ms")
                     isRunning = false
-                    if (exitCode != 0) {
-                        val msg = "\r\n[Process exited with code $exitCode]\r\n"
+                    if (code != 0) {
+                        val msg = "\r\n[Process completed (code $code) - press Enter]\r\n"
+                        emulator.processInput(msg.toByteArray(), 0, msg.length)
+                    } else if (duration <= 1500) {
+                        val msg = "\r\n[Process completed - press Enter]\r\n"
                         emulator.processInput(msg.toByteArray(), 0, msg.length)
                     }
-                    onSessionFinished?.invoke(exitCode)
+                    onSessionFinished?.invoke(code)
                 }
             }
 

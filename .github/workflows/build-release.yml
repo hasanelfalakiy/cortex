@@ -314,7 +314,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.63"
+          VERSION="v1.24.64"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -325,20 +325,16 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.63 — Terminal Search & Clickable Links
+          ### Cortex Release v1.24.64 — PTY Job Control & Process Lifecycle Fix
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.63:
-          - **Terminal Text Search**: Swipe **right-to-left across the extra-keys toolbar** (or tap the new `FIND` key) to slide out a search bar. Type to highlight every match in the scrollback, jump between hits with the up/down arrows, and see a live `n/total` counter. The current match is highlighted in amber, other matches in slate, and the viewport auto-centers on the selected hit. `Back` closes the search bar first.
-          - **Clickable URLs**: `http://`, `https://`, `ftp://`, `file://` and `www.` links are now detected in the scrollback, underlined in blue, and open in Chrome / your default Android browser with a single tap — routed through Cortex's own `UrlOpenerServer` bridge, so no `xdg-open` shell hop is required.
-          - **Swipe-Safe Toolbar**: Extra keys now dispatch on a short deferred timer, so a horizontal swipe across the toolbar can never fire an accidental `ESC`/`TAB`/arrow key. Sliding your finger off a button also cancels it.
-          - **Live Refresh**: Search hit counts and URL underlines are throttled-refreshed in the background as new terminal output streams in — no manual re-search needed.
-          - **Scrollback-Performance**: Search scans 5000 lines of history through a single-pass, O(n) row index and marks highlights with a cached row lookup, keeping even full-buffer searches instant on low-end devices.
-
-          #### Included Packages & Assets:
-          - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)
-          - `Cortex-armeabi-v7a-signed.apk` (32-bit ARM)
+          #### What's New in v1.24.64:
+          - **PTY Foreground Process Group Fix (`tcsetpgrp`)**: Resolved the critical bug where typing any key in the terminal caused the shell to receive `-EIO` from the Linux kernel tty driver and exit with code 1 due to missing foreground process group assignment. Added safe `tcsetpgrp` assignment with `SIGTTOU`/`SIGTTIN` protection.
+          - **Complete Termios & Signal Reset**: Standard POSIX termios line discipline flags (`ICRNL`, `IXON`, `OPOST`, `ONLCR`, `ISIG`, `ICANON`, `ECHO`, etc.) are now explicitly initialized on the PTY slave. Inherited Android ART/Zygote signal masks are cleared via `sigprocmask`, and all signal handlers are restored to `SIG_DFL`.
+          - **ELF Header Validation**: Child process executable binaries are now inspected for the `\x7fELF` magic header before routing through `ld.so`, preventing loader errors on shell scripts or non-ELF files.
+          - **Bionic Environment Isolation**: Android system host binaries (e.g. `/system/bin/sh`) are executed with cleaned environments stripping glibc `LD_PRELOAD`, `LD_LIBRARY_PATH`, and `GLIBC_TUNABLES`, preventing dynamic linker aborts.
+          - **Resilient Session Lifecycle**: Terminal sessions that exit with an error code now remain open showing `[Process completed (code X) - press Enter]`, allowing users to inspect error outputs instead of immediately closing the application.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)

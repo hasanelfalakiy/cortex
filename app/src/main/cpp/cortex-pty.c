@@ -18,6 +18,20 @@
 #define TAG "CortexPty"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+static char **clean_env_for_system(char *const envp[], int envCount) {
+    char **new_env = malloc(sizeof(char *) * (envCount + 1));
+    if (!new_env) return (char **)envp;
+    int dst = 0;
+    for (int i = 0; i < envCount; i++) {
+        if (strncmp(envp[i], "LD_PRELOAD=", 11) != 0 &&
+            strncmp(envp[i], "LD_LIBRARY_PATH=", 16) != 0 &&
+            strncmp(envp[i], "GLIBC_TUNABLES=", 15) != 0) {
+            new_env[dst++] = envp[i];
+        }
+    }
+    new_env[dst] = NULL;
+    return new_env;
+}
 
 JNIEXPORT jintArray JNICALL
 Java_org_cortex_terminal_pty_PtyNative_createPty(
@@ -127,7 +141,31 @@ Java_org_cortex_terminal_pty_PtyNative_createPty(
         }
         close(masterFd);
 
-        // Reset signal handlers
+        // Set foreground process group to child process
+        pid_t pgrp = getpid();
+        signal(SIGTTOU, SIG_IGN);
+        signal(SIGTTIN, SIG_IGN);
+        tcsetpgrp(STDIN_FILENO, pgrp);
+        signal(SIGTTOU, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+
+        // Configure standard terminal attributes
+        struct termios tios;
+        memset(&tios, 0, sizeof(struct termios));
+        if (tcgetattr(STDIN_FILENO, &tios) == 0) {
+            tios.c_iflag |= (ICRNL | IXON);
+            tios.c_oflag |= (OPOST | ONLCR);
+            tios.c_cflag |= (CS8 | CREAD);
+            tios.c_lflag |= (ISIG | ICANON | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE | IEXTEN);
+            tcsetattr(STDIN_FILENO, TCSANOW, &tios);
+        }
+
+        // Reset signal mask so no inherited signals are blocked
+        sigset_t empty_mask;
+        sigemptyset(&empty_mask);
+        sigprocmask(SIG_SETMASK, &empty_mask, NULL);
+
+        // Reset signal handlers to default
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sa.sa_handler = SIG_DFL;
@@ -136,6 +174,10 @@ Java_org_cortex_terminal_pty_PtyNative_createPty(
         sigaction(SIGINT, &sa, NULL);
         sigaction(SIGQUIT, &sa, NULL);
         sigaction(SIGTERM, &sa, NULL);
+        sigaction(SIGPIPE, &sa, NULL);
+        sigaction(SIGTSTP, &sa, NULL);
+        sigaction(SIGTTIN, &sa, NULL);
+        sigaction(SIGTTOU, &sa, NULL);
 
         if (cwd && chdir(cwd) != 0) {
             // If cwd fails, fallback to root
@@ -151,7 +193,20 @@ Java_org_cortex_terminal_pty_PtyNative_createPty(
             }
         }
 
+        int is_glibc_elf = 0;
         if (cortex_root && strlen(cortex_root) > 0 && strncmp(cmd, cortex_root, strlen(cortex_root)) == 0) {
+            int fd = open(cmd, O_RDONLY);
+            if (fd >= 0) {
+                char hdr[4];
+                ssize_t n = read(fd, hdr, sizeof(hdr));
+                close(fd);
+                if (n >= 4 && (unsigned char)hdr[0] == 0x7f && hdr[1] == 'E' && hdr[2] == 'L' && hdr[3] == 'F') {
+                    is_glibc_elf = 1;
+                }
+            }
+        }
+
+        if (is_glibc_elf) {
             char ld_so[PATH_MAX] = {0};
             #if defined(__aarch64__)
             snprintf(ld_so, sizeof(ld_so), "%s/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1", cortex_root);
@@ -195,8 +250,13 @@ Java_org_cortex_terminal_pty_PtyNative_createPty(
             }
         }
 
-        // Execute command normally if not glibc or if ld.so not found
-        execve(cmd, argv, envp);
+        // If command is outside cortex_root (e.g. host /system/bin/sh), clean env
+        if (!cortex_root || strncmp(cmd, cortex_root, strlen(cortex_root)) != 0) {
+            char **sys_env = clean_env_for_system(envp, envCount);
+            execve(cmd, argv, sys_env);
+        } else {
+            execve(cmd, argv, envp);
+        }
 
         // If execve fails, print diagnostic and exit
         char errMsg[256];

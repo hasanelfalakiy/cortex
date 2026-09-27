@@ -1278,22 +1278,37 @@ class TerminalView @JvmOverloads constructor(
     }
 
     fun sendChar(ch: Char) {
+        val sess = session ?: return
+        if (!sess.isRunning) {
+            if (ch == '\n' || ch == '\r') {
+                sess.onCloseRequested?.invoke()
+            }
+            return
+        }
         clearSelection()
         scrollOffset = 0
         val targetChar = if (ch == '\n') '\r' else ch
         val bytes = KeyMapper.getCharBytes(targetChar, isCtrlPressed, isAltPressed)
-        session?.write(bytes)
+        sess.write(bytes)
         isCtrlPressed = false
         isAltPressed = false
     }
 
     fun sendKeySequence(keyCode: Int): Boolean {
+        val sess = session ?: return false
+        if (!sess.isRunning) {
+            if (keyCode == KeyEvent.KEYCODE_ENTER) {
+                sess.onCloseRequested?.invoke()
+                return true
+            }
+            return false
+        }
         clearSelection()
         scrollOffset = 0
-        val isAppCursor = session?.emulator?.isApplicationCursorKeys ?: false
+        val isAppCursor = sess.emulator.isApplicationCursorKeys
         val bytes = KeyMapper.getEscapeSequence(keyCode, isCtrlPressed, isAltPressed, isAppCursor)
         return if (bytes != null) {
-            session?.write(bytes)
+            sess.write(bytes)
             isCtrlPressed = false
             isAltPressed = false
             true
