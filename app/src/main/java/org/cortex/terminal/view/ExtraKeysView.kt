@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import org.cortex.terminal.R
@@ -18,6 +19,18 @@ class ExtraKeysView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : LinearLayout(context, attrs, defStyleAttr) {
+
+    var onSearchToggle: (() -> Unit)? = null
+
+    private var swipeDownX = 0f
+    private var swipeDownY = 0f
+    private var swipeConsumed = false
+
+    // Deferred key dispatch: a press only fires its key after a tiny delay so a
+    // horizontal swipe across the toolbar can cancel it instead of typing garbage.
+    private var pendingKeyAction: Runnable? = null
+    private var keyDownX = 0f
+    private var keyDownY = 0f
 
     var terminalView: TerminalView? = null
         set(value) {
@@ -43,7 +56,7 @@ class ExtraKeysView @JvmOverloads constructor(
         val row1Keys = listOf(
             "ESC" to { terminalView?.sendKeySequence(KeyEvent.KEYCODE_ESCAPE) },
             "☰" to { onMenuClick?.invoke() },
-            "↕" to { terminalView?.sendKeySequence(KeyEvent.KEYCODE_PAGE_DOWN) },
+            "FIND" to { onSearchToggle?.invoke() },
             "HOME" to { terminalView?.sendKeySequence(KeyEvent.KEYCODE_MOVE_HOME) },
             "↑" to { terminalView?.sendKeySequence(KeyEvent.KEYCODE_DPAD_UP) },
             "END" to { terminalView?.sendKeySequence(KeyEvent.KEYCODE_MOVE_END) },
@@ -94,16 +107,44 @@ class ExtraKeysView @JvmOverloads constructor(
                 }
                 layoutParams = params
 
+                val moveSlopPx = 22 * resources.displayMetrics.density
                 setOnTouchListener { v, event ->
                     when (event.action) {
                         MotionEvent.ACTION_DOWN -> {
                             v.isPressed = true
                             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            action()
+                            keyDownX = event.x
+                            keyDownY = event.y
+                            cancelPendingKey(v)
+                            val runnable = Runnable {
+                                pendingKeyAction = null
+                                try { action() } catch (_: Exception) {}
+                            }
+                            pendingKeyAction = runnable
+                            v.postDelayed(runnable, 55L)
                             true
                         }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        MotionEvent.ACTION_MOVE -> {
+                            val moved = kotlin.math.abs(event.x - keyDownX) > moveSlopPx ||
+                                        kotlin.math.abs(event.y - keyDownY) > moveSlopPx
+                            if (moved) {
+                                cancelPendingKey(v)
+                                v.isPressed = false
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_UP -> {
                             v.isPressed = false
+                            // Fire immediately if the tap ended before the deferral elapsed
+                            pendingKeyAction?.let { r ->
+                                cancelPendingKey(v)
+                                try { r.run() } catch (_: Exception) {}
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_CANCEL -> {
+                            v.isPressed = false
+                            cancelPendingKey(v)
                             true
                         }
                         else -> false
@@ -118,6 +159,37 @@ class ExtraKeysView @JvmOverloads constructor(
         }
 
         return rowLayout
+    }
+
+    private fun cancelPendingKey(v: View) {
+        pendingKeyAction?.let { r ->
+            try { v.removeCallbacks(r) } catch (_: Exception) {}
+        }
+        pendingKeyAction = null
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.action) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeDownX = ev.x
+                swipeDownY = ev.y
+                swipeConsumed = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!swipeConsumed) {
+                    val dx = ev.x - swipeDownX
+                    val dy = kotlin.math.abs(ev.y - swipeDownY)
+                    val density = resources.displayMetrics.density
+                    // Right-to-left swipe across the toolbar opens terminal search
+                    if (dx < -60 * density && kotlin.math.abs(dx) > dy * 1.5f) {
+                        swipeConsumed = true
+                        try { onSearchToggle?.invoke() } catch (_: Exception) {}
+                        return true
+                    }
+                }
+            }
+        }
+        return super.onInterceptTouchEvent(ev)
     }
 
     private fun toggleCtrl() {

@@ -33,7 +33,9 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import org.cortex.terminal.emulator.KeyMapper
+import org.cortex.terminal.emulator.TerminalBuffer
 import org.cortex.terminal.emulator.TerminalColor
+import org.cortex.terminal.emulator.TerminalSearch
 import org.cortex.terminal.session.TerminalSession
 import kotlin.concurrent.withLock
 import kotlin.math.hypot
@@ -52,10 +54,27 @@ class TerminalView @JvmOverloads constructor(
             field?.emulator?.onScreenUpdate = null
             field = value
             value?.onRedraw = { postInvalidate() }
-            value?.emulator?.onScreenUpdate = { postInvalidate() }
+            value?.emulator?.onScreenUpdate = {
+                urlRefreshCounter++
+                // Throttled background re-scan: keeps link underlines and search
+                // hit counters fresh without paying regex cost on every frame.
+                if (urlRefreshCounter % 90 == 0) {
+                    try { refreshUrlLinks() } catch (_: Exception) {}
+                    if (searchQuery.isNotEmpty()) {
+                        try { startSearch(searchQuery) } catch (_: Exception) {}
+                    }
+                }
+                postInvalidate()
+            }
             isCtrlPressed = false
             isAltPressed = false
+            searchHits = emptyList()
+            searchIndex = -1
+            searchQuery = ""
+            urlHits = emptyList()
+            urlRefreshCounter = 0
             updateTerminalDimensions()
+            onSearchChanged?.invoke("", -1, 0)
             postInvalidate()
         }
 
@@ -104,6 +123,18 @@ class TerminalView @JvmOverloads constructor(
         color = Color.WHITE
         style = Paint.Style.FILL
     }
+    private val searchMatchPaint = Paint().apply {
+        color = Color.parseColor("#45475a")
+        style = Paint.Style.FILL
+    }
+    private val searchCurrentPaint = Paint().apply {
+        color = Color.parseColor("#f9e2af")
+        style = Paint.Style.FILL
+    }
+    private val linkUnderlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#89b4fa")
+        strokeWidth = 2f
+    }
     private val selectionHandlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#89b4fa")
         style = Paint.Style.FILL
@@ -132,6 +163,21 @@ class TerminalView @JvmOverloads constructor(
         private set
 
     var onModifiersChanged: (() -> Unit)? = null
+
+    // ---- Terminal text search (Ctrl+F style) ----
+    var searchHits: List<TerminalBuffer.SearchHit> = emptyList()
+        private set
+    var searchIndex: Int = -1
+        private set
+    var searchQuery: String = ""
+        private set
+    var onSearchChanged: ((query: String, index: Int, total: Int) -> Unit)? = null
+
+    // ---- Clickable URL links ----
+    var urlHits: List<TerminalSearch.UrlHit> = emptyList()
+        private set
+    var onUrlTapped: ((url: String) -> Unit)? = null
+    private var urlRefreshCounter: Int = 0
 
     var isCtrlPressed = false
         set(value) {
@@ -318,6 +364,9 @@ class TerminalView @JvmOverloads constructor(
             if (isSelecting) {
                 clearSelection()
             }
+            if (handleUrlTap(e.x, e.y)) {
+                return true
+            }
             requestFocus()
             showKeyboard()
 
@@ -482,12 +531,22 @@ class TerminalView @JvmOverloads constructor(
                             canvas.drawRect(x, y, x + charWidth, y + charHeight, bgPaint)
                         }
 
+                        val isMatch = if (c < row.isSearchMatch.size) row.isSearchMatch[c] else false
+                        val isCurrent = if (c < row.isSearchCurrent.size) row.isSearchCurrent[c] else false
+                        val isLink = if (c < row.isUrlLink.size) row.isUrlLink[c] else false
+                        if (isMatch) {
+                            canvas.drawRect(x, y, x + charWidth, y + charHeight,
+                                if (isCurrent) searchCurrentPaint else searchMatchPaint)
+                        }
+
                         // Draw character
                         if (char != ' ') {
-                            textPaint.color = drawFg
+                            textPaint.color = if (isCurrent) Color.BLACK else drawFg
                             textPaint.isFakeBoldText = (style.toInt() and 1) != 0
-                            textPaint.isUnderlineText = (style.toInt() and 2) != 0
+                            textPaint.isUnderlineText = (style.toInt() and 2) != 0 || isLink
                             canvas.drawText(row.chars, c, 1, x, y + charBaseline, textPaint)
+                        } else if (isLink) {
+                            canvas.drawLine(x, y + charHeight - 3f, x + charWidth, y + charHeight - 3f, linkUnderlinePaint)
                         }
                     }
                 }
@@ -942,6 +1001,124 @@ class TerminalView @JvmOverloads constructor(
         post {
             showActionPopup()
         }
+    }
+
+    /**
+     * Search state can be mutated from the PTY reader thread (throttled live refresh),
+     * so always hand the result back to the UI thread before touching widgets.
+     */
+    private fun postSearchChanged() {
+        val listener = onSearchChanged ?: return
+        val q = searchQuery
+        val i = searchIndex
+        val t = searchHits.size
+        post { try { listener.invoke(q, i, t) } catch (_: Exception) {} }
+    }
+
+    // ================= Search API =================
+    fun startSearch(query: String) {
+        val emulator = session?.emulator ?: return
+        searchQuery = query
+        emulator.lock.withLock {
+            if (query.isEmpty()) {
+                searchHits = emptyList()
+                searchIndex = -1
+                emulator.buffer.clearSearchHighlights()
+            } else {
+                val hits = TerminalSearch.findAll(emulator.buffer, query, ignoreCase = true)
+                searchHits = hits
+                searchIndex = if (hits.isEmpty()) -1 else hits.size - 1
+                emulator.buffer.markSearchHits(hits, searchIndex)
+                if (searchIndex >= 0) scrollToSearchHit(hits[searchIndex])
+            }
+        }
+        postSearchChanged()
+        postInvalidate()
+    }
+
+    fun nextSearchHit() {
+        if (searchHits.isEmpty()) return
+        val emulator = session?.emulator ?: return
+        searchIndex = (searchIndex + 1) % searchHits.size
+        emulator.lock.withLock {
+            emulator.buffer.markSearchHits(searchHits, searchIndex)
+            scrollToSearchHit(searchHits[searchIndex])
+        }
+        postSearchChanged()
+        postInvalidate()
+    }
+
+    fun prevSearchHit() {
+        if (searchHits.isEmpty()) return
+        val emulator = session?.emulator ?: return
+        searchIndex = if (searchIndex - 1 < 0) searchHits.size - 1 else searchIndex - 1
+        emulator.lock.withLock {
+            emulator.buffer.markSearchHits(searchHits, searchIndex)
+            scrollToSearchHit(searchHits[searchIndex])
+        }
+        postSearchChanged()
+        postInvalidate()
+    }
+
+    fun clearSearch() {
+        searchHits = emptyList()
+        searchIndex = -1
+        searchQuery = ""
+        try {
+            val emulator = session?.emulator ?: return
+            emulator.lock.withLock { emulator.buffer.clearSearchHighlights() }
+        } finally {
+            postSearchChanged()
+            postInvalidate()
+        }
+    }
+
+    /**
+     * Buffer row -> screen row mapping is: screenRow = scrollOffset + bufferRow.
+     * If the hit is already on screen we leave the viewport untouched; otherwise we
+     * center it, clamping to the available scrollback depth.
+     */
+    private fun scrollToSearchHit(hit: TerminalBuffer.SearchHit) {
+        val buffer = session?.emulator?.buffer ?: return
+        val maxOffset = buffer.history.size
+        val alreadyVisible = scrollOffset >= -hit.row && scrollOffset <= (rows - 1 - hit.row)
+        if (alreadyVisible) return
+        val desired = (rows / 2) - hit.row
+        scrollOffset = desired.coerceIn(0, maxOffset)
+    }
+
+    // ================= URL links API =================
+    fun refreshUrlLinks() {
+        val emulator = session?.emulator ?: return
+        emulator.lock.withLock {
+            val urls = TerminalSearch.findUrls(emulator.buffer)
+            urlHits = urls
+            emulator.buffer.clearUrlHighlights()
+            for (u in urls) {
+                val row = emulator.buffer.rowForIndex(u.row) ?: continue
+                for (c in u.startCol..u.endCol) {
+                    if (c in 0 until row.cols) row.isUrlLink[c] = true
+                }
+            }
+        }
+        postInvalidate()
+    }
+
+    private fun handleUrlTap(x: Float, y: Float): Boolean {
+        if (urlHits.isEmpty()) return false
+        val screenRow = (y / charHeight).toInt()
+        if (screenRow !in 0 until rows) return false
+        val col = (x / charWidth).toInt()
+        if (col !in 0 until cols) return false
+        val bufferRow = screenRow - scrollOffset
+        for (u in urlHits) {
+            if (u.row == bufferRow && col in u.startCol..u.endCol) {
+                val url = TerminalSearch.normalizeUrl(u.url)
+                onUrlTapped?.invoke(url)
+                return true
+            }
+        }
+        return false
     }
 
 

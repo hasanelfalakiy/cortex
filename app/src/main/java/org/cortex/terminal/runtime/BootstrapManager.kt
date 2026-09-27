@@ -327,7 +327,7 @@ object BootstrapManager {
         ensureEssentialBinaries(root, home)
     }
 
-    private const val CURRENT_BOOTSTRAP_VERSION = 12462
+    private const val CURRENT_BOOTSTRAP_VERSION = 12463
 
     fun isBootstrapInstalled(context: Context): Boolean {
         val root = Environment.getCortexRoot(context)

@@ -33,6 +33,8 @@ Most existing Android terminal setups suffer from two major problems:
 - **All-Files Storage Access**: Deep integration with Android's `MANAGE_EXTERNAL_STORAGE` to work directly across device files on `/sdcard`.
 - **High-Speed Display Engine**: Smooth text rendering with full 256-color, TrueColor, and crisp monospace typography.
 - **Convenient Keyboard Bar & Tabs**: Quick-access buttons for Esc, Tab, Ctrl, Alt, arrows, and multi-tab session management.
+- **Terminal Search**: Swipe right-to-left across the keyboard bar (or tap `FIND`) to search the full 5000-line scrollback with live hit counts and match-to-match navigation.
+- **Clickable Links**: URLs printed in the terminal are underlined and open directly in Chrome or your default Android browser with a single tap.
 
 ---
 

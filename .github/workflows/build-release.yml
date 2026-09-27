@@ -314,7 +314,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.62"
+          VERSION="v1.24.63"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -325,16 +325,20 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.62 — Seamless Auto-Browser Redirection & System Resilience
+          ### Cortex Release v1.24.63 — Terminal Search & Clickable Links
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.62:
-          - **Multi-Engine CLI Browser Redirection**: Completely reworked `xdg-open` and the internal `UrlOpenerServer` (port 4715). Added support for raw TCP sockets (`/dev/tcp`), netcat (`nc`), curl (`GET /open?url=...`), python socket bridges, and clean Android `am start` fallbacks.
-          - **Full Browser Package Visibility (`<queries>`)**: Added explicit package declarations in `AndroidManifest.xml` for Google Chrome (Stable, Beta, Dev, Canary), Firefox, Brave, Opera, Edge, and Samsung Internet to comply with Android 11+ package visibility rules.
-          - **Socket Reuse & HTTP Gateway**: Added `SO_REUSEADDR` and HTTP 1.1 support to `UrlOpenerServer` to prevent port binding collisions on service restarts and enable universal invocation from standard HTTP clients.
-          - **Reliable CLI Auth Flows**: OAuth login flows (`gh auth login`, `antigravity auth login`, git credential helpers, and OAuth callbacks) now instantly and reliably pop open your default Android browser without freezing or dropping packets.
-          - **Bootstrap Refresh (v1.24.62)**: Bumped internal bootstrap version to guarantee automatic deployment and updates of the new `xdg-open` launcher and browser aliases.
+          #### What's New in v1.24.63:
+          - **Terminal Text Search**: Swipe **right-to-left across the extra-keys toolbar** (or tap the new `FIND` key) to slide out a search bar. Type to highlight every match in the scrollback, jump between hits with the up/down arrows, and see a live `n/total` counter. The current match is highlighted in amber, other matches in slate, and the viewport auto-centers on the selected hit. `Back` closes the search bar first.
+          - **Clickable URLs**: `http://`, `https://`, `ftp://`, `file://` and `www.` links are now detected in the scrollback, underlined in blue, and open in Chrome / your default Android browser with a single tap — routed through Cortex's own `UrlOpenerServer` bridge, so no `xdg-open` shell hop is required.
+          - **Swipe-Safe Toolbar**: Extra keys now dispatch on a short deferred timer, so a horizontal swipe across the toolbar can never fire an accidental `ESC`/`TAB`/arrow key. Sliding your finger off a button also cancels it.
+          - **Live Refresh**: Search hit counts and URL underlines are throttled-refreshed in the background as new terminal output streams in — no manual re-search needed.
+          - **Scrollback-Performance**: Search scans 5000 lines of history through a single-pass, O(n) row index and marks highlights with a cached row lookup, keeping even full-buffer searches instant on low-end devices.
+
+          #### Included Packages & Assets:
+          - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)
+          - `Cortex-armeabi-v7a-signed.apk` (32-bit ARM)
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)

@@ -5,6 +5,10 @@ import java.util.LinkedList
 class TerminalBuffer(var rows: Int, var cols: Int, private val maxHistory: Int = 5000) {
     val history = LinkedList<TerminalRow>()
     var screen = Array(rows) { TerminalRow(cols) }
+        private set
+
+    /** Bumped whenever the screen array identity is replaced (resize / alt-screen swap). */
+    private var screenGeneration = 0
 
     var cursorRow = 0
     var cursorCol = 0
@@ -86,6 +90,7 @@ class TerminalBuffer(var rows: Int, var cols: Int, private val maxHistory: Int =
         }
 
         screen = newScreen
+        screenGeneration++
         rows = newRows
         cols = newCols
         scrollTop = 0
@@ -97,6 +102,7 @@ class TerminalBuffer(var rows: Int, var cols: Int, private val maxHistory: Int =
         if (enable && !isAlternate) {
             alternateScreen = screen
             screen = Array(rows) { TerminalRow(cols) }
+            screenGeneration++
             savedCursorRow = cursorRow
             savedCursorCol = cursorCol
             cursorRow = 0
@@ -106,7 +112,7 @@ class TerminalBuffer(var rows: Int, var cols: Int, private val maxHistory: Int =
             isWrapPending = false
             isAlternate = true
         } else if (!enable && isAlternate) {
-            alternateScreen?.let { screen = it }
+            alternateScreen?.let { screen = it; screenGeneration++ }
             alternateScreen = null
             cursorRow = savedCursorRow.coerceIn(0, rows - 1)
             cursorCol = savedCursorCol.coerceIn(0, cols - 1)
@@ -258,6 +264,101 @@ class TerminalBuffer(var rows: Int, var cols: Int, private val maxHistory: Int =
             screen[effectiveIndex]
         } else {
             TerminalRow(cols)
+        }
+    }
+
+    data class SearchHit(val row: Int, val startCol: Int, val endCol: Int)
+
+    fun clearSearchHighlights() {
+        for (r in history) r.clearSearchFlags()
+        for (r in screen) r.clearSearchFlags()
+    }
+
+    fun clearUrlHighlights() {
+        for (r in history) r.clearUrlFlags()
+        for (r in screen) r.clearUrlFlags()
+    }
+
+    /**
+     * Single-pass, O(n) view over scrollback + screen.
+     * The returned list is reused across calls to keep search cheap on 5000-row history.
+     */
+    /**
+     * Flattened, ascending view over scrollback + screen.
+     *
+     * Buffer row indices are strictly increasing (-history.size .. rows-1), which lets
+     * [rowForIndex] binary-search straight into this list instead of walking the
+     * LinkedList, keeping full-scrollback search O(n) instead of O(n^2).
+     */
+    private var rowsCache: ArrayList<Pair<Int, TerminalRow>> = ArrayList()
+    private var cachedHistorySize = -1
+    private var cachedScreenRows = -1
+    private var cachedGeneration = -1
+
+    private fun rebuildRowsCacheIfNeeded() {
+        val screenCount = minOf(rows, screen.size)
+        if (cachedHistorySize == history.size &&
+            cachedScreenRows == screenCount &&
+            cachedGeneration == screenGeneration) return
+        val needed = history.size + screenCount
+        if (rowsCache.size != needed) {
+            rowsCache = ArrayList(needed)
+        } else {
+            rowsCache.clear()
+        }
+        var idx = -history.size
+        val it = history.iterator()
+        while (it.hasNext()) {
+            rowsCache.add(Pair(idx, it.next()))
+            idx++
+        }
+        for (i in 0 until screenCount) {
+            rowsCache.add(Pair(i, screen[i]))
+        }
+        cachedHistorySize = history.size
+        cachedScreenRows = screenCount
+        cachedGeneration = screenGeneration
+    }
+
+    fun allRowsWithIndex(): List<Pair<Int, TerminalRow>> {
+        rebuildRowsCacheIfNeeded()
+        return rowsCache
+    }
+
+    fun rowForIndex(bufferRow: Int): TerminalRow? {
+        if (bufferRow < 0 && bufferRow < -history.size) return null
+        if (bufferRow >= rows) return null
+        rebuildRowsCacheIfNeeded()
+        var lo = 0
+        var hi = rowsCache.size - 1
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            val key = rowsCache[mid].first
+            when {
+                key == bufferRow -> return rowsCache[mid].second
+                key < bufferRow -> lo = mid + 1
+                else -> hi = mid - 1
+            }
+        }
+        return null
+    }
+
+    fun markSearchHits(hits: List<SearchHit>, currentIndex: Int) {
+        clearSearchHighlights()
+        var lastRowIndex = Int.MIN_VALUE
+        var cachedRow: TerminalRow? = null
+        for ((idx, hit) in hits.withIndex()) {
+            if (hit.row != lastRowIndex) {
+                cachedRow = rowForIndex(hit.row)
+                lastRowIndex = hit.row
+            }
+            val row = cachedRow ?: continue
+            for (c in hit.startCol..hit.endCol) {
+                if (c in 0 until row.cols) {
+                    row.isSearchMatch[c] = true
+                    if (idx == currentIndex) row.isSearchCurrent[c] = true
+                }
+            }
         }
     }
 

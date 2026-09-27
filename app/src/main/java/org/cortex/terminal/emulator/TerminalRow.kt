@@ -5,6 +5,9 @@ class TerminalRow(val cols: Int) {
     val fgColors = IntArray(cols) { TerminalColor.DEFAULT_FG }
     val bgColors = IntArray(cols) { TerminalColor.DEFAULT_BG }
     val styles = ByteArray(cols) { 0 } // bit 0: bold, bit 1: underline, bit 2: inverse
+    val isSearchMatch = BooleanArray(cols) { false }
+    val isSearchCurrent = BooleanArray(cols) { false }
+    val isUrlLink = BooleanArray(cols) { false }
     var isWrapped: Boolean = false
 
     fun clear(fg: Int = TerminalColor.DEFAULT_FG, bg: Int = TerminalColor.DEFAULT_BG) {
@@ -13,6 +16,9 @@ class TerminalRow(val cols: Int) {
             fgColors[i] = fg
             bgColors[i] = bg
             styles[i] = 0
+            isSearchMatch[i] = false
+            isSearchCurrent[i] = false
+            isUrlLink[i] = false
         }
         isWrapped = false
     }
@@ -23,6 +29,22 @@ class TerminalRow(val cols: Int) {
             fgColors[col] = fg
             bgColors[col] = bg
             styles[col] = style
+            isSearchMatch[col] = false
+            isSearchCurrent[col] = false
+            isUrlLink[col] = false
+        }
+    }
+
+    fun clearSearchFlags() {
+        for (i in 0 until cols) {
+            isSearchMatch[i] = false
+            isSearchCurrent[i] = false
+        }
+    }
+
+    fun clearUrlFlags() {
+        for (i in 0 until cols) {
+            isUrlLink[i] = false
         }
     }
 
@@ -32,6 +54,12 @@ class TerminalRow(val cols: Int) {
         System.arraycopy(other.fgColors, 0, fgColors, 0, count)
         System.arraycopy(other.bgColors, 0, bgColors, 0, count)
         System.arraycopy(other.styles, 0, styles, 0, count)
+        val mCount = minOf(cols, other.isSearchMatch.size)
+        System.arraycopy(other.isSearchMatch, 0, isSearchMatch, 0, mCount)
+        val cCount = minOf(cols, other.isSearchCurrent.size)
+        System.arraycopy(other.isSearchCurrent, 0, isSearchCurrent, 0, cCount)
+        val uCount = minOf(cols, other.isUrlLink.size)
+        System.arraycopy(other.isUrlLink, 0, isUrlLink, 0, uCount)
         isWrapped = other.isWrapped
     }
 

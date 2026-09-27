@@ -26,6 +26,7 @@ import org.cortex.terminal.session.SessionManager
 import org.cortex.terminal.session.TerminalSession
 import org.cortex.terminal.update.UpdateManager
 import org.cortex.terminal.view.ExtraKeysView
+import org.cortex.terminal.view.TerminalSearchBar
 import org.cortex.terminal.view.TerminalView
 
 class MainActivity : AppCompatActivity() {
@@ -38,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var terminalView: TerminalView
     private lateinit var extraKeysView: ExtraKeysView
+    private lateinit var searchBar: TerminalSearchBar
     private lateinit var drawerTitle: TextView
     private lateinit var btnDrawerSettings: ImageView
     private lateinit var layoutUpdateBadge: android.widget.FrameLayout
@@ -70,6 +72,7 @@ class MainActivity : AppCompatActivity() {
 
         terminalView = findViewById(R.id.terminalView)
         extraKeysView = findViewById(R.id.extraKeysView)
+        searchBar = findViewById(R.id.searchBar)
         drawerTitle = findViewById(R.id.drawerTitle)
         btnDrawerSettings = findViewById(R.id.btnDrawerSettings)
         layoutUpdateBadge = findViewById(R.id.layoutUpdateBadge)
@@ -124,6 +127,24 @@ class MainActivity : AppCompatActivity() {
                 drawerLayout.closeDrawer(GravityCompat.START)
             } else {
                 drawerLayout.openDrawer(GravityCompat.START)
+            }
+        }
+
+        // ---- Terminal search (FIND key / swipe right-to-left) ----
+        extraKeysView.onSearchToggle = { toggleTerminalSearch() }
+        searchBar.onQueryChanged = { query -> terminalView.startSearch(query) }
+        searchBar.onNext = { terminalView.nextSearchHit() }
+        searchBar.onPrev = { terminalView.prevSearchHit() }
+        searchBar.onClose = { terminalView.clearSearch() }
+        terminalView.onSearchChanged = { _, index, total -> searchBar.updateCount(index, total) }
+
+        // ---- Clickable URLs -> Android browser (reuses UrlOpenerServer bridge) ----
+        terminalView.onUrlTapped = { url ->
+            val opened = org.cortex.terminal.runtime.UrlOpenerServer.openUrlInBrowser(this, url)
+            if (opened) {
+                Toast.makeText(this, "Opening: $url", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "Unable to open: $url", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -377,7 +398,19 @@ class MainActivity : AppCompatActivity() {
         return session
     }
 
+    private fun toggleTerminalSearch() {
+        if (searchBar.isShowing()) {
+            searchBar.hide()
+        } else {
+            searchBar.show()
+        }
+    }
+
     override fun onBackPressed() {
+        if (searchBar.isShowing()) {
+            searchBar.hide()
+            return
+        }
         if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
             drawerLayout.closeDrawer(GravityCompat.START)
             return
@@ -451,6 +484,9 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {}
         bootstrapDialog = null
         sessionManager.onSessionChanged = null
+        try { if (searchBar.isShowing()) searchBar.hide() } catch (_: Exception) {}
+        terminalView.onUrlTapped = null
+        terminalView.onSearchChanged = null
         terminalView.session = null
         if (instance == this) instance = null
         if (sessionManager.sessions.isEmpty()) {
