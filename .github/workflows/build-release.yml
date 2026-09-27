@@ -28,10 +28,13 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Accept Android SDK Licenses
         run: |
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
           yes | sdkmanager --licenses || true
 
       - name: Cache Android NDK and CMake
@@ -46,6 +49,9 @@ jobs:
       - name: Install Android NDK and CMake
         if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
           sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
 
       - name: Setup Gradle
@@ -308,7 +314,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.61"
+          VERSION="v1.24.62"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -319,16 +325,16 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.61 — Glibc & APT Integrity Protection
+          ### Cortex Release v1.24.62 — Seamless Auto-Browser Redirection & System Resilience
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.61:
-          - **Glibc & Dynamic Linker Protection**: Implemented strict APT pinning for core Glibc packages (`libc6`, `libc-bin`, `libc-dev-bin`, `locales`) with priority `-1` to permanently prevent upstream Ubuntu repository upgrades from overwriting patched Android SECCOMP linkers.
-          - **Dpkg Status Hold**: Marked all core system glibc packages with `hold ok installed` status in the dpkg database to ensure full protection across `apt upgrade`, `apt dist-upgrade`, and manual dpkg invocations.
-          - **Corrupted Installation Auto-Repair**: Bumped internal bootstrap version to trigger seamless auto-repair of the base system and dynamic linkers for devices impacted by aborted `apt upgrade` attempts.
-          - **Cache & Lock Cleanup**: Automated cleanup of downloaded glibc deb archives from `/var/cache/apt/archives/` and stale 0-byte lock files during initialization.
-          - **Preserved Feature Set**: Retained all appearance enhancements from v1.24.60, including JetBrains Mono & Fira Code Nerd Fonts, 6 developer color schemes, custom font support, and ultra-low latency native execution.
+          #### What's New in v1.24.62:
+          - **Multi-Engine CLI Browser Redirection**: Completely reworked `xdg-open` and the internal `UrlOpenerServer` (port 4715). Added support for raw TCP sockets (`/dev/tcp`), netcat (`nc`), curl (`GET /open?url=...`), python socket bridges, and clean Android `am start` fallbacks.
+          - **Full Browser Package Visibility (`<queries>`)**: Added explicit package declarations in `AndroidManifest.xml` for Google Chrome (Stable, Beta, Dev, Canary), Firefox, Brave, Opera, Edge, and Samsung Internet to comply with Android 11+ package visibility rules.
+          - **Socket Reuse & HTTP Gateway**: Added `SO_REUSEADDR` and HTTP 1.1 support to `UrlOpenerServer` to prevent port binding collisions on service restarts and enable universal invocation from standard HTTP clients.
+          - **Reliable CLI Auth Flows**: OAuth login flows (`gh auth login`, `antigravity auth login`, git credential helpers, and OAuth callbacks) now instantly and reliably pop open your default Android browser without freezing or dropping packets.
+          - **Bootstrap Refresh (v1.24.62)**: Bumped internal bootstrap version to guarantee automatic deployment and updates of the new `xdg-open` launcher and browser aliases.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)

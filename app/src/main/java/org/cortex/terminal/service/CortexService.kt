@@ -61,28 +61,58 @@ class CortexService : Service() {
             private set
 
         fun start(context: Context) {
-            val intent = Intent(context, CortexService::class.java).apply {
-                action = ACTION_START
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                val intent = Intent(context, CortexService::class.java).apply {
+                    action = ACTION_START
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        context.startForegroundService(intent)
+                    } catch (e: IllegalStateException) {
+                        // App in background on Android 8+: fallback to normal start.
+                        // onStartCommand will promote to foreground when allowed.
+                        android.util.Log.w("CortexService", "startForegroundService blocked, using startService", e)
+                        try { context.startService(intent) } catch (e2: Exception) {
+                            android.util.Log.e("CortexService", "Failed to start service", e2)
+                        }
+                    }
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("CortexService", "Failed to start service", e)
             }
         }
 
         fun updateNotification(context: Context) {
-            val intent = Intent(context, CortexService::class.java).apply {
-                action = ACTION_UPDATE_NOTIFICATION
+            try {
+                val intent = Intent(context, CortexService::class.java).apply {
+                    action = ACTION_UPDATE_NOTIFICATION
+                }
+                // Never promote a stopped service with startForegroundService here:
+                // use plain startService so updateNotification() can never cause
+                // "Context.startForegroundService() did not then call Service.startForeground()" ANR.
+                // If the process is in background on Android 8+, this may throw
+                // IllegalStateException — safe to ignore, UI is not visible anyway.
+                context.startService(intent)
+            } catch (e: IllegalStateException) {
+                android.util.Log.w("CortexService", "updateNotification skipped (background)", e)
+            } catch (e: Exception) {
+                android.util.Log.e("CortexService", "updateNotification failed", e)
             }
-            context.startService(intent)
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, CortexService::class.java).apply {
-                action = ACTION_STOP
+            try {
+                val intent = Intent(context, CortexService::class.java).apply {
+                    action = ACTION_STOP
+                }
+                context.startService(intent)
+            } catch (e: IllegalStateException) {
+                android.util.Log.w("CortexService", "stop skipped (background)", e)
+            } catch (e: Exception) {
+                android.util.Log.e("CortexService", "stop failed", e)
             }
-            context.startService(intent)
         }
     }
 
@@ -93,13 +123,61 @@ class CortexService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        getOrCreateSessionManager(this)
-        org.cortex.terminal.runtime.UrlOpenerServer.start(this)
-        createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // 1) Promote to foreground IMMEDIATELY. Android gives ~5s after
+        // startForegroundService() before ANR-killing the app. Everything
+        // below (channel creation, session manager, socket bind) must never
+        // run before this call.
+        try {
+            createNotificationChannel()
+        } catch (e: Exception) {
+            android.util.Log.e("CortexService", "createNotificationChannel failed", e)
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CortexService", "startForeground failed", e)
+            // Last resort: still try without type so the 5s ANR window is satisfied.
+            try { startForeground(NOTIFICATION_ID, buildNotification()) } catch (e2: Exception) {}
+        }
+        // 2) Heavy / blocking init AFTER startForeground so it can never
+        // delay the foreground promotion and trigger the reported ANR.
+        try {
+            getOrCreateSessionManager(this)
+        } catch (e: Exception) {
+            android.util.Log.e("CortexService", "getOrCreateSessionManager failed", e)
+        }
+        try {
+            org.cortex.terminal.runtime.UrlOpenerServer.start(this)
+        } catch (e: Exception) {
+            android.util.Log.e("CortexService", "UrlOpenerServer.start failed", e)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Defensive re-promotion: if the system restarted us (e.g. after ANR
+        // kill or process death), make sure we are foreground again before
+        // doing anything else.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("CortexService", "re-promote startForeground failed", e)
+        }
         when (intent?.action) {
             ACTION_EXIT -> {
                 exitAll()

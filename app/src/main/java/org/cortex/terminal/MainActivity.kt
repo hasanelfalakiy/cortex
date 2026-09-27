@@ -133,7 +133,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         instance = this
-        CortexService.start(this)
+        // Start foreground service FIRST so the 5s startForeground() ANR
+        // window starts ticking while the UI keeps initializing. All
+        // UrlOpener bootstrap/file I/O below was moved off the main thread.
+        try {
+            CortexService.start(this)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "CortexService.start failed", e)
+        }
         sessionManager = CortexService.getOrCreateSessionManager(this)
 
         sessionAdapter = SessionAdapter(
@@ -199,13 +206,41 @@ class MainActivity : AppCompatActivity() {
         }
 
         applyPreferences()
-        org.cortex.terminal.runtime.UrlOpenerServer.start(this)
         val root = Environment.getCortexRoot(this)
-        BootstrapManager.updateDnsConfiguration(this, root)
-        BootstrapManager.updateTimezone(this, root)
-        BootstrapManager.ensureCaCertificates(root, this)
-        BootstrapManager.ensureEssentialBinaries(root, Environment.getHomeDir(this))
-        BootstrapManager.initializeFileSystem(this)
+        val homeDir = Environment.getHomeDir(this)
+        // Heavy file I/O (DNS, timezone, certs, essential binaries, xdg-open,
+        // root tools) runs on a background thread. Doing it on the main thread
+        // stalls onCreate, delays the first frame, and on slow devices can
+        // push the CortexService foreground promotion past the 5s ANR window —
+        // exactly the blank-screen + ANR kill reported in issue #1.
+        org.cortex.terminal.runtime.UrlOpenerServer.start(this)
+        kotlin.concurrent.thread(name = "Cortex-StartupMaintenance") {
+            try {
+                BootstrapManager.updateDnsConfiguration(this@MainActivity, root)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup DNS update failed", e)
+            }
+            try {
+                BootstrapManager.updateTimezone(this@MainActivity, root)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup timezone update failed", e)
+            }
+            try {
+                BootstrapManager.ensureCaCertificates(root, this@MainActivity)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup CA certs failed", e)
+            }
+            try {
+                BootstrapManager.ensureEssentialBinaries(root, homeDir)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup essential binaries failed", e)
+            }
+            try {
+                BootstrapManager.initializeFileSystem(this@MainActivity)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup filesystem init failed", e)
+            }
+        }
         if (!BootstrapManager.isBootstrapInstalled(this)) {
             isBootstrapping = true
             val progress = android.app.ProgressDialog(this).apply {

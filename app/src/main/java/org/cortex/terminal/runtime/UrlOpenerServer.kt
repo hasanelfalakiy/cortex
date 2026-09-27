@@ -11,18 +11,20 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URLDecoder
 import java.util.concurrent.Executors
 
 /**
  * UrlOpenerServer listens on localhost:4715 for browser redirection requests from CLI tools
  * (e.g. `xdg-open`, `sensible-browser`, `google-chrome`, `gh auth login`, `antigravity auth login`).
  *
- * Supported command format:
+ * Supported formats:
  *   OPEN <url>
- * or raw:
  *   <url>
+ *   HTTP GET requests: GET /open?url=<encoded_url> or GET /<url> HTTP/1.1
  *
  * When received, Cortex dispatches an Android Intent to Chrome or the system default browser.
  */
@@ -42,7 +44,9 @@ object UrlOpenerServer {
 
         threadPool.execute {
             try {
-                val server = ServerSocket(PORT, 10, InetAddress.getByName("127.0.0.1"))
+                val server = ServerSocket()
+                server.reuseAddress = true
+                server.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), PORT), 50)
                 serverSocket = server
                 isRunning = true
                 Log.i(TAG, "UrlOpenerServer started on 127.0.0.1:$PORT")
@@ -81,24 +85,52 @@ object UrlOpenerServer {
             val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
             val writer = OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8)
 
-            val line = reader.readLine()?.trim()
-            if (line.isNullOrEmpty()) {
+            val rawLine = reader.readLine()?.trim()
+            if (rawLine.isNullOrEmpty()) {
                 writer.write("ERR empty request\n")
                 writer.flush()
                 return
             }
 
-            val targetUrl = if (line.startsWith("OPEN ", ignoreCase = true)) {
-                line.substring(5).trim()
-            } else {
-                line
-            }.trim('\"', '\'')
+            var isHttp = false
+            var targetUrl: String = rawLine
+
+            if (rawLine.startsWith("GET ", ignoreCase = true) || rawLine.startsWith("POST ", ignoreCase = true)) {
+                isHttp = true
+                val path = rawLine.substringAfter(" ").substringBefore(" ").trim()
+                targetUrl = when {
+                    path.contains("url=") -> {
+                        val encoded = path.substringAfter("url=").substringBefore("&")
+                        try { URLDecoder.decode(encoded, "UTF-8") } catch (e: Exception) { encoded }
+                    }
+                    path.startsWith("/http://", ignoreCase = true) -> path.substring(1)
+                    path.startsWith("/https://", ignoreCase = true) -> path.substring(1)
+                    path.startsWith("/open/", ignoreCase = true) -> path.substring(6)
+                    else -> path.trimStart('/')
+                }
+            } else if (rawLine.startsWith("OPEN ", ignoreCase = true)) {
+                targetUrl = rawLine.substring(5).trim()
+            }
+
+            targetUrl = targetUrl.trim('\"', '\'', ' ', '\t')
 
             val success = openUrlInBrowser(context, targetUrl)
-            if (success) {
-                writer.write("OK\n")
+            if (isHttp) {
+                if (success) {
+                    val body = "OK\n"
+                    val resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body"
+                    writer.write(resp)
+                } else {
+                    val body = "ERR failed to open URL\n"
+                    val resp = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body"
+                    writer.write(resp)
+                }
             } else {
-                writer.write("ERR failed to open URL\n")
+                if (success) {
+                    writer.write("OK\n")
+                } else {
+                    writer.write("ERR failed to open URL\n")
+                }
             }
             writer.flush()
         } catch (e: Exception) {
@@ -129,34 +161,37 @@ object UrlOpenerServer {
         }
 
         mainHandler.post {
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-
-            // Prefer Google Chrome if installed on the device
             val pm = context.packageManager
-            val chromePkg = "com.android.chrome"
-            val hasChrome = try {
-                pm.getPackageInfo(chromePkg, 0)
-                true
-            } catch (e: Exception) {
-                false
-            }
+            val browserPackages = listOf(
+                "com.android.chrome",
+                "com.chrome.beta",
+                "com.chrome.dev",
+                "com.chrome.canary",
+                "org.mozilla.firefox",
+                "com.brave.browser",
+                "com.opera.browser",
+                "com.microsoft.emmx",
+                "com.sec.android.app.sbrowser"
+            )
 
-            if (hasChrome) {
+            for (pkg in browserPackages) {
                 try {
-                    intent.setPackage(chromePkg)
+                    pm.getPackageInfo(pkg, 0)
+                    val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                        setPackage(pkg)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    }
                     context.startActivity(intent)
                     return@post
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to launch Chrome specifically, falling back to default handler", e)
+                    // Try next browser
                 }
             }
 
             // Fallback to default browser / system handler
             try {
                 val fallbackIntent = Intent(Intent.ACTION_VIEW, uri).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
                 context.startActivity(fallbackIntent)
             } catch (e: Exception) {
