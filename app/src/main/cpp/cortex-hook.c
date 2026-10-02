@@ -1752,7 +1752,7 @@ int setns(int fd, int nstype) {
     return 0;
 }
 
-int close_range(unsigned int first, unsigned int last, unsigned int flags) {
+int close_range(unsigned int first, unsigned int last, int flags) {
     (void)flags;
     DIR *d = opendir("/proc/self/fd");
     if (d) {
@@ -1846,7 +1846,7 @@ long syscall(long number, ...) {
 
 #ifdef __NR_close_range
     if (number == __NR_close_range) {
-        return (long)close_range((unsigned int)arg1, (unsigned int)arg2, (unsigned int)arg3);
+        return (long)close_range((unsigned int)arg1, (unsigned int)arg2, (int)arg3);
     }
 #endif
 
