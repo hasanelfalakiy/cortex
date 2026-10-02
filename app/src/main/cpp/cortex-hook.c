@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <dlfcn.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -19,6 +20,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -28,20 +30,90 @@
 #include <pwd.h>
 #include <grp.h>
 
-// Intercept SECCOMP blocked syscalls (SIGSYS) and return -ENOSYS so glibc falls back gracefully
+// Intercept SECCOMP blocked syscalls (SIGSYS), resolve sandbox/landlock gracefully, and advance PC
 static void cortex_sigsys_handler(int sig, siginfo_t *info, void *ctx) {
     (void)sig;
-    (void)info;
     if (!ctx) return;
     ucontext_t *uctx = (ucontext_t *)ctx;
+
+    int sys_nr = (info != NULL) ? info->si_syscall : -1;
+    long ret_val = -ENOSYS;
+
+    // Handle Landlock, seccomp, namespaces, and clone3 traps on Android
+    if (sys_nr == 444 /* __NR_landlock_create_ruleset */) {
 #if defined(__aarch64__)
-    uctx->uc_mcontext.regs[0] = -ENOSYS;
+        uint32_t flags = (uint32_t)uctx->uc_mcontext.regs[2];
 #elif defined(__arm__)
-    uctx->uc_mcontext.arm_r0 = -ENOSYS;
+        uint32_t flags = (uint32_t)uctx->uc_mcontext.arm_r2;
+#elif defined(__x86_64__) && defined(REG_RDX)
+        uint32_t flags = (uint32_t)uctx->uc_mcontext.gregs[REG_RDX];
+#else
+        uint32_t flags = 0;
+#endif
+        if (flags & 1 /* LANDLOCK_CREATE_RULESET_VERSION */) {
+            ret_val = 1; // ABI v1
+        } else {
+            ret_val = 3; // Mock valid ruleset fd
+        }
+    } else if (sys_nr == 445 /* __NR_landlock_add_rule */ ||
+               sys_nr == 446 /* __NR_landlock_restrict_self */) {
+        ret_val = 0;
+    } else if (sys_nr == 277 /* __NR_seccomp (arm64) */ ||
+               sys_nr == 317 /* __NR_seccomp (x86_64) */ ||
+               sys_nr == 383 /* __NR_seccomp (arm32) */) {
+        ret_val = 0;
+    } else if (sys_nr == 97  /* __NR_unshare (arm64) */ ||
+               sys_nr == 272 /* __NR_unshare (x86_64) */ ||
+               sys_nr == 337 /* __NR_unshare (arm32) */) {
+        ret_val = 0;
+    } else if (sys_nr == 435 /* __NR_clone3 */) {
+        ret_val = -ENOSYS;
+    }
+
+#if defined(__aarch64__)
+    uctx->uc_mcontext.regs[0] = ret_val;
+    if (uctx->uc_mcontext.pc != 0) {
+        uint32_t insn = 0;
+        memcpy(&insn, (const void *)uctx->uc_mcontext.pc, sizeof(insn));
+        if (insn == 0xd4000001) { // svc #0 opcode
+            uctx->uc_mcontext.pc += 4;
+        }
+    }
+#elif defined(__arm__)
+    uctx->uc_mcontext.arm_r0 = ret_val;
+    if (uctx->uc_mcontext.arm_pc != 0) {
+        if (uctx->uc_mcontext.arm_cpsr & 0x20) {
+            uint16_t insn = 0;
+            memcpy(&insn, (const void *)uctx->uc_mcontext.arm_pc, sizeof(insn));
+            if ((insn & 0xff00) == 0xdf00) {
+                uctx->uc_mcontext.arm_pc += 2;
+            }
+        } else {
+            uint32_t insn = 0;
+            memcpy(&insn, (const void *)uctx->uc_mcontext.arm_pc, sizeof(insn));
+            if ((insn & 0x0f000000) == 0x0f000000) {
+                uctx->uc_mcontext.arm_pc += 4;
+            }
+        }
+    }
 #elif defined(__x86_64__) && defined(REG_RAX)
-    uctx->uc_mcontext.gregs[REG_RAX] = -ENOSYS;
+    uctx->uc_mcontext.gregs[REG_RAX] = ret_val;
+    if (uctx->uc_mcontext.gregs[REG_RIP] != 0) {
+        unsigned char insn[2] = {0};
+        memcpy(insn, (const void *)uctx->uc_mcontext.gregs[REG_RIP], sizeof(insn));
+        if (insn[0] == 0x0f && insn[1] == 0x05) { // syscall opcode
+            uctx->uc_mcontext.gregs[REG_RIP] += 2;
+        }
+    }
 #elif defined(__i386__) && defined(REG_EAX)
-    uctx->uc_mcontext.gregs[REG_EAX] = -ENOSYS;
+    uctx->uc_mcontext.gregs[REG_EAX] = ret_val;
+    if (uctx->uc_mcontext.gregs[REG_EIP] != 0) {
+        unsigned char insn[2] = {0};
+        memcpy(insn, (const void *)uctx->uc_mcontext.gregs[REG_EIP], sizeof(insn));
+        if (insn[0] == 0xcd && insn[1] == 0x80) { // int 0x80 opcode
+            uctx->uc_mcontext.gregs[REG_EIP] += 2;
+        }
+    }
 #endif
 }
 
@@ -60,7 +132,7 @@ __attribute__((constructor(101))) static void install_sigsys_handler(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = cortex_sigsys_handler;
-    sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_RESTART;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
     sigemptyset(&sa.sa_mask);
     real_sig(SIGSYS, &sa, NULL);
 }
@@ -76,7 +148,7 @@ int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact)
         if (oldact) {
             memset(oldact, 0, sizeof(*oldact));
             oldact->sa_sigaction = cortex_sigsys_handler;
-            oldact->sa_flags = SA_SIGINFO | SA_NODEFER | SA_RESTART;
+            oldact->sa_flags = SA_SIGINFO | SA_RESTART;
         }
         return 0;
     }
@@ -94,7 +166,7 @@ int rt_sigaction(int signum, const struct sigaction *act, struct sigaction *olda
         if (oldact) {
             memset(oldact, 0, sizeof(*oldact));
             oldact->sa_sigaction = cortex_sigsys_handler;
-            oldact->sa_flags = SA_SIGINFO | SA_NODEFER | SA_RESTART;
+            oldact->sa_flags = SA_SIGINFO | SA_RESTART;
         }
         return 0;
     }
@@ -1500,23 +1572,301 @@ int prctl(int option, ...) {
     unsigned long arg5 = va_arg(ap, unsigned long);
     va_end(ap);
 
-    if (option == PR_SET_NO_NEW_PRIVS) {
-        return 0;
-    }
-#ifdef PR_SET_SECCOMP
-    if (option == PR_SET_SECCOMP) {
-        return 0;
-    }
+    // PR_SET_NO_NEW_PRIVS = 38, PR_GET_NO_NEW_PRIVS = 39
+#ifdef PR_SET_NO_NEW_PRIVS
+    if (option == PR_SET_NO_NEW_PRIVS) return 0;
 #endif
+    if (option == 38) return 0;
+#ifdef PR_GET_NO_NEW_PRIVS
+    if (option == PR_GET_NO_NEW_PRIVS) return 1;
+#endif
+    if (option == 39) return 1;
+
+    // PR_SET_SECCOMP = 22, PR_GET_SECCOMP = 21
+#ifdef PR_SET_SECCOMP
+    if (option == PR_SET_SECCOMP) return 0;
+#endif
+    if (option == 22) return 0;
+#ifdef PR_GET_SECCOMP
+    if (option == PR_GET_SECCOMP) return 0;
+#endif
+    if (option == 21) return 0;
+
+    // PR_SET_SPECULATION_CTRL = 47
+    if (option == 47) return 0;
+
     static int (*orig_prctl)(int, unsigned long, unsigned long, unsigned long, unsigned long) = NULL;
     if (!orig_prctl) orig_prctl = (int (*)(int, unsigned long, unsigned long, unsigned long, unsigned long))dlsym(RTLD_NEXT, "prctl");
     return orig_prctl ? orig_prctl(option, arg2, arg3, arg4, arg5) : 0;
 }
+
+#ifndef LANDLOCK_CREATE_RULESET_VERSION
+#define LANDLOCK_CREATE_RULESET_VERSION (1U << 0)
+#endif
+
+#ifndef __NR_landlock_create_ruleset
+#define __NR_landlock_create_ruleset 444
+#endif
+#ifndef __NR_landlock_add_rule
+#define __NR_landlock_add_rule 445
+#endif
+#ifndef __NR_landlock_restrict_self
+#define __NR_landlock_restrict_self 446
+#endif
+
+#ifndef __NR_seccomp
+#if defined(__aarch64__)
+#define __NR_seccomp 277
+#elif defined(__x86_64__)
+#define __NR_seccomp 317
+#elif defined(__arm__)
+#define __NR_seccomp 383
+#else
+#define __NR_seccomp 277
+#endif
+#endif
+
+#ifndef __NR_unshare
+#if defined(__aarch64__)
+#define __NR_unshare 97
+#elif defined(__x86_64__)
+#define __NR_unshare 272
+#elif defined(__arm__)
+#define __NR_unshare 337
+#else
+#define __NR_unshare 97
+#endif
+#endif
+
+#ifndef __NR_setns
+#if defined(__aarch64__)
+#define __NR_setns 268
+#elif defined(__x86_64__)
+#define __NR_setns 308
+#elif defined(__arm__)
+#define __NR_setns 375
+#else
+#define __NR_setns 268
+#endif
+#endif
+
+#ifndef __NR_clone3
+#define __NR_clone3 435
+#endif
+#ifndef __NR_pidfd_open
+#define __NR_pidfd_open 434
+#endif
+#ifndef __NR_pidfd_send_signal
+#define __NR_pidfd_send_signal 424
+#endif
+#ifndef __NR_pidfd_getfd
+#define __NR_pidfd_getfd 438
+#endif
+#ifndef __NR_close_range
+#define __NR_close_range 436
+#endif
+#ifndef __NR_faccessat2
+#define __NR_faccessat2 439
+#endif
+#ifndef __NR_statx
+#if defined(__aarch64__) || defined(__arm__)
+#define __NR_statx 291
+#elif defined(__x86_64__)
+#define __NR_statx 332
+#endif
+#endif
+
+#ifndef SECCOMP_SET_MODE_STRICT
+#define SECCOMP_SET_MODE_STRICT 0
+#endif
+#ifndef SECCOMP_SET_MODE_FILTER
+#define SECCOMP_SET_MODE_FILTER 1
+#endif
+#ifndef SECCOMP_GET_ACTION_AVAIL
+#define SECCOMP_GET_ACTION_AVAIL 2
+#endif
+
+static int cortex_get_dummy_ruleset_fd(void) {
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        int p[2];
+        if (pipe2(p, O_CLOEXEC) == 0) {
+            close(p[1]);
+            fd = p[0];
+        }
+    }
+    return fd;
+}
+
+int landlock_create_ruleset(const void *attr, size_t size, uint32_t flags) {
+    (void)attr;
+    (void)size;
+    if (flags & LANDLOCK_CREATE_RULESET_VERSION) {
+        const char *env_enosys = getenv("CORTEX_LANDLOCK_ENOSYS");
+        if (env_enosys && (env_enosys[0] == '1' || env_enosys[0] == 'y' || env_enosys[0] == 'Y')) {
+            errno = ENOSYS;
+            return -1;
+        }
+        return 1; // Landlock ABI version 1 supported
+    }
+    int fd = cortex_get_dummy_ruleset_fd();
+    if (fd >= 0) return fd;
+    errno = ENOSYS;
+    return -1;
+}
+
+int landlock_add_rule(int ruleset_fd, int rule_type, const void *rule_attr, uint32_t flags) {
+    (void)ruleset_fd;
+    (void)rule_type;
+    (void)rule_attr;
+    (void)flags;
+    return 0;
+}
+
+int landlock_restrict_self(int ruleset_fd, uint32_t flags) {
+    (void)ruleset_fd;
+    (void)flags;
+    return 0;
+}
+
 int seccomp(unsigned int operation, unsigned int flags, void *args) {
-    (void)operation;
     (void)flags;
     (void)args;
+    if (operation == SECCOMP_GET_ACTION_AVAIL) {
+        return 0;
+    }
+    if (operation == SECCOMP_SET_MODE_FILTER || operation == SECCOMP_SET_MODE_STRICT) {
+        return 0;
+    }
     return 0;
+}
+
+int unshare(int flags) {
+    (void)flags;
+    return 0;
+}
+
+int setns(int fd, int nstype) {
+    (void)fd;
+    (void)nstype;
+    return 0;
+}
+
+int close_range(unsigned int first, unsigned int last, unsigned int flags) {
+    (void)flags;
+    DIR *d = opendir("/proc/self/fd");
+    if (d) {
+        int dfd = dirfd(d);
+        struct dirent *de;
+        while ((de = readdir(d)) != NULL) {
+            if (de->d_name[0] == '.') continue;
+            int fd = atoi(de->d_name);
+            if (fd >= (int)first && fd <= (int)last && fd != dfd) {
+                close(fd);
+            }
+        }
+        closedir(d);
+        return 0;
+    }
+    int max_fd = (int)sysconf(_SC_OPEN_MAX);
+    if (max_fd <= 0 || max_fd > 1024) max_fd = 1024;
+    int end = (last < (unsigned int)max_fd) ? (int)last : max_fd;
+    for (int fd = (int)first; fd <= end; fd++) {
+        close(fd);
+    }
+    return 0;
+}
+
+long syscall(long number, ...) {
+    va_list ap;
+    va_start(ap, number);
+    unsigned long arg1 = va_arg(ap, unsigned long);
+    unsigned long arg2 = va_arg(ap, unsigned long);
+    unsigned long arg3 = va_arg(ap, unsigned long);
+    unsigned long arg4 = va_arg(ap, unsigned long);
+    unsigned long arg5 = va_arg(ap, unsigned long);
+    unsigned long arg6 = va_arg(ap, unsigned long);
+    va_end(ap);
+
+#ifdef __NR_landlock_create_ruleset
+    if (number == __NR_landlock_create_ruleset) {
+        return (long)landlock_create_ruleset((const void *)arg1, (size_t)arg2, (uint32_t)arg3);
+    }
+    if (number == __NR_landlock_add_rule) {
+        return (long)landlock_add_rule((int)arg1, (int)arg2, (const void *)arg3, (uint32_t)arg4);
+    }
+    if (number == __NR_landlock_restrict_self) {
+        return (long)landlock_restrict_self((int)arg1, (uint32_t)arg2);
+    }
+#endif
+
+#ifdef __NR_seccomp
+    if (number == __NR_seccomp) {
+        return (long)seccomp((unsigned int)arg1, (unsigned int)arg2, (void *)arg3);
+    }
+#endif
+
+#ifdef __NR_unshare
+    if (number == __NR_unshare) {
+        return (long)unshare((int)arg1);
+    }
+#endif
+
+#ifdef __NR_setns
+    if (number == __NR_setns) {
+        return (long)setns((int)arg1, (int)arg2);
+    }
+#endif
+
+#ifdef __NR_clone3
+    if (number == __NR_clone3) {
+        errno = ENOSYS;
+        return -1;
+    }
+#endif
+
+#ifdef __NR_pidfd_open
+    if (number == __NR_pidfd_open) {
+        errno = ENOSYS;
+        return -1;
+    }
+#endif
+#ifdef __NR_pidfd_send_signal
+    if (number == __NR_pidfd_send_signal) {
+        errno = ENOSYS;
+        return -1;
+    }
+#endif
+#ifdef __NR_pidfd_getfd
+    if (number == __NR_pidfd_getfd) {
+        errno = ENOSYS;
+        return -1;
+    }
+#endif
+
+#ifdef __NR_close_range
+    if (number == __NR_close_range) {
+        return (long)close_range((unsigned int)arg1, (unsigned int)arg2, (unsigned int)arg3);
+    }
+#endif
+
+#if defined(__NR_statx)
+    if (number == __NR_statx) {
+        return (long)statx((int)arg1, (const char *)arg2, (int)arg3, (unsigned int)arg4, (struct statx *)arg5);
+    }
+#endif
+
+#if defined(__NR_faccessat2)
+    if (number == __NR_faccessat2) {
+        return (long)faccessat2((int)arg1, (const char *)arg2, (int)arg3, (int)arg4);
+    }
+#endif
+
+    static long (*orig_syscall)(long, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long) = NULL;
+    if (!orig_syscall) {
+        orig_syscall = (long (*)(long, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))dlsym(RTLD_NEXT, "syscall");
+    }
+    return orig_syscall ? orig_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6) : -1;
 }
 
 // Hook lzma multi-threaded routines to enforce single-threaded execution

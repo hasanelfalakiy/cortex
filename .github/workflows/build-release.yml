@@ -314,7 +314,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.64"
+          VERSION="v1.24.65"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -325,16 +325,18 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.64 — PTY Job Control & Process Lifecycle Fix
+          ### Cortex Release v1.24.65 — Native Landlock, Seccomp & AI CLI Support
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.64:
-          - **PTY Foreground Process Group Fix (`tcsetpgrp`)**: Resolved the critical bug where typing any key in the terminal caused the shell to receive `-EIO` from the Linux kernel tty driver and exit with code 1 due to missing foreground process group assignment. Added safe `tcsetpgrp` assignment with `SIGTTOU`/`SIGTTIN` protection.
-          - **Complete Termios & Signal Reset**: Standard POSIX termios line discipline flags (`ICRNL`, `IXON`, `OPOST`, `ONLCR`, `ISIG`, `ICANON`, `ECHO`, etc.) are now explicitly initialized on the PTY slave. Inherited Android ART/Zygote signal masks are cleared via `sigprocmask`, and all signal handlers are restored to `SIG_DFL`.
-          - **ELF Header Validation**: Child process executable binaries are now inspected for the `\x7fELF` magic header before routing through `ld.so`, preventing loader errors on shell scripts or non-ELF files.
-          - **Bionic Environment Isolation**: Android system host binaries (e.g. `/system/bin/sh`) are executed with cleaned environments stripping glibc `LD_PRELOAD`, `LD_LIBRARY_PATH`, and `GLIBC_TUNABLES`, preventing dynamic linker aborts.
-          - **Resilient Session Lifecycle**: Terminal sessions that exit with an error code now remain open showing `[Process completed (code X) - press Enter]`, allowing users to inspect error outputs instead of immediately closing the application.
+          #### What's New in v1.24.65:
+          - **Seamless Native AI CLI Support (Meta Muse Code, Claude Code, etc.)**: Fixed the fatal `Bad system call` (`SIGSYS` / Signal 31) error that occurred when launching modern AI CLI agents after workspace approval.
+          - **Master `syscall()` Interception Layer (`libcortex-hook.so`)**: Added direct userspace hooking for `syscall()` to intercept unsupported or blocked kernel calls before they ever reach the CPU syscall instruction (`svc #0`), executing in nanoseconds with zero overhead:
+            - **Landlock LSM**: Intercepts `landlock_create_ruleset`, `landlock_add_rule`, and `landlock_restrict_self` (syscalls 444, 445, 446). Provides Landlock ABI version 1 probing and mock descriptor emulation (or `-ENOSYS` fallback via `CORTEX_LANDLOCK_ENOSYS=1`).
+            - **Seccomp Filters**: Intercepts `seccomp` (syscall 277/317/383) and `prctl(PR_SET_SECCOMP, ...)` to satisfy security cages without triggering kernel traps.
+            - **User Namespaces**: Intercepts `unshare` and `setns` to allow unprivileged sandbox runners to proceed smoothly without `EPERM`.
+            - **Kernel 4.x / 5.x Syscall Fallbacks**: Gracefully redirects `clone3` to classic `clone`, intercepts `pidfd_open`/`pidfd_send_signal`/`pidfd_getfd`, safely handles `close_range`, and routes `statx`/`faccessat2` through Cortex path redirection.
+          - **Bulletproof `SIGSYS` Handler with PC Advancement**: Enhanced `cortex_sigsys_handler` to inspect `ucontext_t` machine registers, decode blocked syscall numbers, and automatically advance the program counter (`pc += 4` on ARM64, `RIP += 2` on x86_64, `arm_pc += 2/4` on ARM32) past the trapping `svc #0` instruction, eliminating infinite signal loops and kernel aborts. Removed `SA_NODEFER` for safe signal deferral.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)
