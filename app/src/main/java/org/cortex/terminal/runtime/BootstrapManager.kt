@@ -326,7 +326,7 @@ object BootstrapManager {
         ensureEssentialBinaries(root, home)
     }
 
-    const val CURRENT_BOOTSTRAP_VERSION = 12468
+    const val CURRENT_BOOTSTRAP_VERSION = 12469
 
     fun isBootstrapInstalled(context: Context): Boolean {
         val root = Environment.getCortexRoot(context)
@@ -342,6 +342,7 @@ object BootstrapManager {
                 try {
                     ensureHookLibrary(context, root)
                     ensureKeyrings(root, context)
+                    ensureAptSandbox(root)
                     versionFile.writeText(CURRENT_BOOTSTRAP_VERSION.toString())
                 } catch (e: Exception) {
                     android.util.Log.e("BootstrapManager", "Failed to perform non-destructive bootstrap update", e)
@@ -872,7 +873,7 @@ object BootstrapManager {
         }
     }
 
-    private fun ensureAptSandbox(root: File) {
+    fun ensureAptSandbox(root: File) {
         try {
             val aptConfDir = File(root, "etc/apt/apt.conf.d")
             aptConfDir.mkdirs()
@@ -899,8 +900,11 @@ object BootstrapManager {
                 "   \"--force-unsafe-io\";\n" +
                 "};\n"
             )
+            sbFile.setReadable(true, false)
+            try { android.system.Os.chmod(sbFile.absolutePath, 420) } catch (e: Exception) {}
             val dockerClean = File(aptConfDir, "docker-clean")
             dockerClean.writeText("# Disabled for Cortex\n")
+            dockerClean.setReadable(true, false)
 
             val aptPrefDir = File(root, "etc/apt/preferences.d")
             aptPrefDir.mkdirs()
@@ -1424,11 +1428,70 @@ object BootstrapManager {
             val aptKeyrings = File(root, "etc/apt/keyrings")
             aptKeyrings.mkdirs()
 
-            // 1. Copy any available keyrings from app assets
+            // 1. Get official verified keyring bytes
+            val keyBytes: ByteArray = try {
+                context?.assets?.open("ubuntu-archive-keyring.gpg")?.use { it.readBytes() }
+            } catch (e: Exception) {
+                null
+            }?.takeIf { it.isNotEmpty() } ?: android.util.Base64.decode(UBUNTU_ARCHIVE_KEYRING_BASE64, android.util.Base64.DEFAULT)
+
+            // Signing key ID: 871920D1991BC93C (Ubuntu Archive Automatic Signing Key 2018)
+            val keyIdPattern = byteArrayOf(
+                0x87.toByte(), 0x19.toByte(), 0x20.toByte(), 0xd1.toByte(),
+                0x99.toByte(), 0x1b.toByte(), 0xc9.toByte(), 0x3c.toByte()
+            )
+
+            fun containsKeyId(f: File): Boolean {
+                if (!f.exists() || f.length() < keyIdPattern.size) return false
+                return try {
+                    val content = f.readBytes()
+                    var found = false
+                    for (i in 0..(content.size - keyIdPattern.size)) {
+                        var match = true
+                        for (j in keyIdPattern.indices) {
+                            if (content[i + j] != keyIdPattern[j]) {
+                                match = false
+                                break
+                            }
+                        }
+                        if (match) {
+                            found = true
+                            break
+                        }
+                    }
+                    found
+                } catch (e: Exception) {
+                    false
+                }
+            }
+
+            val targetKeyrings = listOf(
+                File(shareKeyrings, "ubuntu-archive-keyring.gpg"),
+                File(shareKeyrings, "ubuntu-keyring-2018-archive.gpg"),
+                File(aptKeyrings, "ubuntu-archive-keyring.gpg"),
+                File(aptKeyrings, "ubuntu-keyring-2018-archive.gpg"),
+                File(trustedD, "ubuntu-archive-keyring.gpg"),
+                File(trustedD, "ubuntu-keyring-2018-archive.gpg"),
+                File(root, "etc/apt/trusted.gpg")
+            )
+
+            for (target in targetKeyrings) {
+                if (!containsKeyId(target)) {
+                    try {
+                        target.parentFile?.mkdirs()
+                        target.outputStream().use { it.write(keyBytes) }
+                        target.setReadable(true, false)
+                        try { android.system.Os.chmod(target.absolutePath, 420) } catch (e: Exception) {}
+                        android.util.Log.i("BootstrapManager", "Wrote verified Ubuntu archive keyring to ${target.absolutePath}")
+                    } catch (e: Exception) {
+                        android.util.Log.e("BootstrapManager", "Failed writing keyring to ${target.absolutePath}", e)
+                    }
+                }
+            }
+
+            // Copy secondary keyrings from assets if available
             if (context != null) {
                 val assetKeyrings = listOf(
-                    "ubuntu-archive-keyring.gpg",
-                    "ubuntu-keyring-2018-archive.gpg",
                     "ubuntu-master-keyring.gpg",
                     "ubuntu-archive-removed-keys.gpg",
                     "ubuntu-keyring-2012-cdimage.gpg",
@@ -1436,7 +1499,7 @@ object BootstrapManager {
                 )
                 for (name in assetKeyrings) {
                     try {
-                        val targets = if (name.contains("2018") || name.contains("2012")) {
+                        val targets = if (name.contains("2012")) {
                             listOf(File(trustedD, name), File(shareKeyrings, name))
                         } else {
                             listOf(File(shareKeyrings, name), File(aptKeyrings, name))
@@ -1449,51 +1512,20 @@ object BootstrapManager {
                                         target.parentFile?.mkdirs()
                                         target.outputStream().use { it.write(bytes) }
                                         target.setReadable(true, false)
+                                        try { android.system.Os.chmod(target.absolutePath, 420) } catch (e: Exception) {}
                                     }
                                 }
                             }
                         }
-                    } catch (e: Exception) {
-                        // ignore if specific asset not present
-                    }
+                    } catch (e: Exception) {}
                 }
             }
 
-            // 2. Offline fallback: guarantee ubuntu-archive-keyring.gpg is present with signing key 871920D1991BC93C
-            val archiveKeyring = File(shareKeyrings, "ubuntu-archive-keyring.gpg")
-            if (!archiveKeyring.exists() || archiveKeyring.length() < 1000L) {
+            // Clear any stale partial lists that may have cached failed signature downloads
+            val partialLists = File(root, "var/lib/apt/lists/partial")
+            if (partialLists.exists()) {
                 try {
-                    val keyBytes = android.util.Base64.decode(UBUNTU_ARCHIVE_KEYRING_BASE64, android.util.Base64.DEFAULT)
-                    listOf(
-                        archiveKeyring,
-                        File(aptKeyrings, "ubuntu-archive-keyring.gpg"),
-                        File(trustedD, "ubuntu-keyring-2018-archive.gpg"),
-                        File(trustedD, "ubuntu-archive-keyring.gpg"),
-                        File(root, "etc/apt/trusted.gpg")
-                    ).forEach { target ->
-                        target.parentFile?.mkdirs()
-                        target.outputStream().use { it.write(keyBytes) }
-                        target.setReadable(true, false)
-                    }
-                    android.util.Log.i("BootstrapManager", "Restored Ubuntu archive keyring from embedded base64 (${keyBytes.size} bytes)")
-                } catch (e: Exception) {
-                    android.util.Log.e("BootstrapManager", "Failed to decode embedded keyring", e)
-                }
-            } else {
-                // Ensure trusted.gpg.d and etc/apt/keyrings mirrors exist
-                try {
-                    val archiveBytes = archiveKeyring.readBytes()
-                    listOf(
-                        File(aptKeyrings, "ubuntu-archive-keyring.gpg"),
-                        File(trustedD, "ubuntu-archive-keyring.gpg"),
-                        File(root, "etc/apt/trusted.gpg")
-                    ).forEach { target ->
-                        if (!target.exists() || target.length() != archiveBytes.size.toLong()) {
-                            target.parentFile?.mkdirs()
-                            target.outputStream().use { it.write(archiveBytes) }
-                            target.setReadable(true, false)
-                        }
-                    }
+                    partialLists.listFiles()?.forEach { it.delete() }
                 } catch (e: Exception) {}
             }
         } catch (e: Exception) {

@@ -327,7 +327,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.68"
+          VERSION="v1.24.69"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -338,18 +338,18 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.68 — Official Ubuntu GPG Keyrings & Seamless Package Management
+          ### Cortex Release v1.24.69 — Unconditional Keyring Auto-Healing & Guaranteed APT Package Management
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.68:
-          - **Fixed APT GPG Signature Verification Error (`NO_PUBKEY 871920D1991BC93C`)**:
-            - Added official Ubuntu Archive signing keyrings (`ubuntu-archive-keyring.gpg`, `ubuntu-keyring-2018-archive.gpg`, and master keyrings) to `/usr/share/keyrings/`, `/etc/apt/keyrings/`, `/etc/apt/trusted.gpg.d/`, and `/etc/apt/trusted.gpg`.
-            - `apt update`, `apt install <package>`, and `apt upgrade` now verify noble repository signatures cleanly out of the box without any warnings or missing key errors.
-            - Embedded fallback keyrings directly into `BootstrapManager.kt` so existing installations automatically recover and repair missing keyrings seamlessly on launch without requiring rootfs re-installation.
-          - **Hardened Dynamic Linker Patching & Startup Race Condition Protections**:
-            - Fully atomic ELF modifications (`ATOMIC_MOVE`) prevent race conditions between terminal initialization and maintenance tasks.
-            - Merged-usr symlink protection prevents broken symlink chains on `/lib` and `/usr/lib`.
+          #### What's New in v1.24.69:
+          - **Unconditional Ubuntu Archive Keyring Auto-Healing**:
+            - `ensureKeyrings` now scans byte-by-byte for key `871920D1991BC93C` across all APT keyring locations (`/usr/share/keyrings/`, `/etc/apt/keyrings/`, `/etc/apt/trusted.gpg.d/`, and `/etc/apt/trusted.gpg`).
+            - If any existing keyring on disk is missing the signing key, it is immediately and automatically repaired with the canonical official Ubuntu Archive signing keys.
+            - Clears stale cached partial downloads in `/var/lib/apt/lists/partial/` that cause persistent signature mismatch errors.
+            - Synchronously enforces `01sandbox` APT configuration on startup and during non-destructive bootstrap version bumps.
+          - **Full Native Performance**:
+            - 100% native bare-metal execution on Android without chroot or PRoot.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)
