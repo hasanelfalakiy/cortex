@@ -2174,7 +2174,6 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
     int has_frontend = 0;
     int has_debconf_frontend = 0;
     int has_debconf_seen = 0;
-    int has_real_exe = 0;
 
     char hook_path[PATH_MAX] = {0};
     if (g_cortex_root[0] != '\0') {
@@ -2188,8 +2187,6 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
             has_preload = 1;
         } else if (strncmp(envp[count], "CORTEX_ROOT=", 12) == 0) {
             has_root = 1;
-        } else if (strncmp(envp[count], "CORTEX_REAL_EXE=", 16) == 0) {
-            has_real_exe = 1;
         } else if (strncmp(envp[count], "GLIBC_TUNABLES=", 15) == 0) {
             has_tunables = 1;
         } else if (strncmp(envp[count], "PATH=", 5) == 0) {
@@ -2653,8 +2650,6 @@ int posix_spawn(pid_t *pid, const char *path,
     snprintf(ld_so, sizeof(ld_so), "%s/lib64/ld-linux-x86-64.so.2", g_cortex_root);
 #endif
 
-    char **new_envp = prepare_cortex_env(envp ? envp : environ);
-
     int is_elf = 0;
     if (g_cortex_root[0] != '\0' && strncmp(target, g_cortex_root, strlen(g_cortex_root)) == 0) {
         int fd = open(target, O_RDONLY);
@@ -2671,6 +2666,8 @@ int posix_spawn(pid_t *pid, const char *path,
     if (target && target[0] != '\0') {
         setenv("CORTEX_REAL_EXE", target, 1);
     }
+
+    char **new_envp = prepare_cortex_env(envp ? envp : environ, target);
 
     int ret = -1;
     if (is_elf && access(ld_so, F_OK) == 0 && strcmp(target, ld_so) != 0) {
@@ -2694,14 +2691,12 @@ int posix_spawn(pid_t *pid, const char *path,
             }
             new_argv[argc + 3] = NULL;
 
-            char **new_envp = prepare_cortex_env(envp ? envp : environ, target);
             if (orig_posix_spawn) {
                 ret = orig_posix_spawn(pid, ld_so, file_actions, attrp, new_argv, new_envp);
             }
             free(new_argv);
         }
     } else {
-        char **new_envp = prepare_cortex_env(envp ? envp : environ, target);
         if (orig_posix_spawn) {
             ret = orig_posix_spawn(pid, target, file_actions, attrp, argv, new_envp);
         }
@@ -2712,7 +2707,6 @@ int posix_spawn(pid_t *pid, const char *path,
         if (child < 0) {
             return errno;
         } else if (child == 0) {
-            char **new_envp = prepare_cortex_env(envp ? envp : environ, target);
             execve(target, argv, new_envp);
             _exit(127);
         } else {
