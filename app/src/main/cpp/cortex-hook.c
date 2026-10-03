@@ -3012,6 +3012,15 @@ static int synthesize_fallback_addrinfo(const char *node, const char *service,
         return 0;
     }
 
+    if (strstr(node, "meta.ai") != NULL || strstr(node, "meta.com") != NULL || strstr(node, "facebook.com") != NULL) {
+        const char *ip = (strstr(node, "lookaside.facebook.com") != NULL) ? "57.144.36.128" : "57.144.36.141";
+        struct addrinfo *ai = alloc_one_addrinfo(node, ip, port, socktype, protocol);
+        if (ai) {
+            *res = ai;
+            return 0;
+        }
+    }
+
     return EAI_NONAME;
 }
 

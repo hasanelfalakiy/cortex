@@ -1213,13 +1213,17 @@ object BootstrapManager {
                 "151.101.2.132 cdn-fastly.deb.debian.org\n" +
                 "142.251.127.95 oauth2.googleapis.com\n" +
                 "142.251.127.84 accounts.google.com\n" +
-                "142.250.74.202 www.googleapis.com\n"
+                "142.250.74.202 www.googleapis.com\n" +
+                "57.144.36.141 dev.meta.ai\n" +
+                "57.144.36.141 api.meta.ai\n" +
+                "57.144.36.141 auth.meta.com\n" +
+                "57.144.36.128 lookaside.facebook.com\n"
 
             if (!hostsFile.exists()) {
                 hostsFile.writeText(defaultHosts)
             } else {
                 val currentText = hostsFile.readText()
-                if (!currentText.contains("oauth2.googleapis.com")) {
+                if (!currentText.contains("api.meta.ai")) {
                     hostsFile.writeText(currentText.trimEnd() + "\n" + defaultHosts)
                 }
             }
