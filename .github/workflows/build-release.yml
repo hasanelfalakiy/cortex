@@ -314,7 +314,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.66"
+          VERSION="v1.24.67"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -325,16 +325,18 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.66 — Seamless OpenCode & Native Bun/Node Self-Spawn Engine
+          ### Cortex Release v1.24.67 — Zero-Race Terminal Engine & Complete Syscall Trap Hardening
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.66:
-          - **Complete Fix for OpenCode & Bun/Node Self-Spawning (Code 127 Resolved)**: Intercepted `/proc/self/exe`, `/proc/thread-self/exe`, and `/proc/<pid>/exe` across `readlink`, `readlinkat`, `realpath`, and `syscall(__NR_readlinkat)`. Bun and Node now reliably obtain their actual binary path (`process.execPath`) instead of falling back to the dynamic linker (`ld-linux-aarch64.so.1`), completely fixing `Error: Server process exited with code 127: serve: error while loading shared libraries: serve: cannot open shared object file: No such file or directory`.
-          - **Eliminated Process Completed (Code -11 / SIGSEGV) Crashes**: Added deterministic UNIX domain socket path hashing (`rewrite_unix_socket_path`) preventing `struct sockaddr_un` (108-byte limit) buffer overflows and path truncations. Automatic startup cleanup purges orphaned socket and lock files (`.sock`, `.pid`, `.lock`) across `/tmp`, `~/.local/share/opencode`, and `~/.cache/opencode` following phone reboots or crashes.
-          - **Non-Destructive Seamless APK Updates ("Updates don't break OpenCode")**: Made APK updates 100% non-destructive. `BootstrapManager` now dynamically updates `libcortex-hook.so` atomically on every launch (`ensureHookLibrary`) without re-extracting base archives or overwriting user-installed packages, Bun/Node dependencies, and configurations.
-          - **POSIX-Compliant `posix_spawnp` & PATH Resolution**: Fixed command resolution in `posix_spawnp` to return `ENOENT` directly when unslashed binaries are absent from `PATH`, eliminating zombie child forks with exit code 127.
-          - **Inherited `CORTEX_REAL_EXE` Environment Management**: `prepare_cortex_env` dynamically tracks and updates `CORTEX_REAL_EXE` across nested subprocess chains (`execve`, `posix_spawn`), ensuring deep process trees always resolve their correct executable identities.
+          #### What's New in v1.24.67:
+          - **Fixed Process Completed (Code -31 / SIGSYS) on Fresh Install**: Fixed `ensureHookLibrary` where Ubuntu 24.04 merged-usr symlink (`/lib -> usr/lib`) caused `root/lib/libcortex-hook.so` deletion to delete `targetHook` and create a circular self-referencing symlink loop (`ELOOP`), preventing `libcortex-hook.so` from loading via `LD_PRELOAD`. Broken symlinks are now purged, `libcortex-hook.so` is atomically placed, and merged `/lib` symlinks are safely preserved.
+          - **Fixed Issue #2 — First Terminal Session Crashing with Code -11 (SIGSEGV)**: Resolved startup race condition where background maintenance threads (`Cortex-StartupMaintenance` and `Cortex-BackgroundMaintenance`) concurrently modified active linkers and deleted symlinks while the initial terminal session was launching bash:
+            - `patchDynamicLinker` now uses atomic replacement (`.ctx_patch_tmp` -> `Files.move(ATOMIC_MOVE)`), never truncating active mmap'd ELF libraries in-place.
+            - `ensureEssentialBinaries` checks if existing binaries can execute before copying and performs atomic updates.
+            - `fixAbsoluteSymlinks` skips parent directories that are symlinks (`bin -> usr/bin`, `sbin -> usr/sbin`) to prevent corrupted relative paths.
+            - `ensureHookLibrary` and socket cleanups run synchronously before session creation, eliminating the race condition on fast devices (e.g. Poco F7).
+          - **Hardened SECCOMP Syscall Instruction Trapping**: In `cortex-hook.c`, `cortex_sigsys_handler` now unconditionally advances the program counter (`pc += 4` on ARM64, `pc += 2`/`4` on ARM32) past any trapped syscall instruction, completely preventing signal recursion loops under SECCOMP. Added `dlsym(RTLD_DEFAULT, "sigaction")` fallback for early constructor registration.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)

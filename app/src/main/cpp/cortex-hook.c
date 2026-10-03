@@ -75,7 +75,11 @@ static void cortex_sigsys_handler(int sig, siginfo_t *info, void *ctx) {
     if (uctx->uc_mcontext.pc != 0) {
         uint32_t insn = 0;
         memcpy(&insn, (const void *)uctx->uc_mcontext.pc, sizeof(insn));
-        if (insn == 0xd4000001) { // svc #0 opcode
+        // In AArch64, svc instructions are 4 bytes: bits [31:21] == 1101 0100 000 (0xd4000000) and bits [4:0] == 00001 (0x1)
+        if ((insn & 0xffe0001f) == 0xd4000001) {
+            uctx->uc_mcontext.pc += 4;
+        } else {
+            // Unconditionally advance 4 bytes past trapped syscall to prevent infinite signal recursion
             uctx->uc_mcontext.pc += 4;
         }
     }
@@ -87,11 +91,15 @@ static void cortex_sigsys_handler(int sig, siginfo_t *info, void *ctx) {
             memcpy(&insn, (const void *)uctx->uc_mcontext.arm_pc, sizeof(insn));
             if ((insn & 0xff00) == 0xdf00) {
                 uctx->uc_mcontext.arm_pc += 2;
+            } else {
+                uctx->uc_mcontext.arm_pc += 2;
             }
         } else {
             uint32_t insn = 0;
             memcpy(&insn, (const void *)uctx->uc_mcontext.arm_pc, sizeof(insn));
             if ((insn & 0x0f000000) == 0x0f000000) {
+                uctx->uc_mcontext.arm_pc += 4;
+            } else {
                 uctx->uc_mcontext.arm_pc += 4;
             }
         }
@@ -121,6 +129,9 @@ static int (*get_real_sigaction(void))(int, const struct sigaction *, struct sig
     static int (*real_sigaction)(int, const struct sigaction *, struct sigaction *) = NULL;
     if (!real_sigaction) {
         real_sigaction = (int (*)(int, const struct sigaction *, struct sigaction *))dlsym(RTLD_NEXT, "sigaction");
+        if (!real_sigaction) {
+            real_sigaction = (int (*)(int, const struct sigaction *, struct sigaction *))dlsym(RTLD_DEFAULT, "sigaction");
+        }
     }
     return real_sigaction;
 }

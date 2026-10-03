@@ -229,6 +229,23 @@ class MainActivity : AppCompatActivity() {
         applyPreferences()
         val root = Environment.getCortexRoot(this)
         val homeDir = Environment.getHomeDir(this)
+
+        if (BootstrapManager.isBootstrapInstalled(this)) {
+            // Fast synchronous prep before creating session:
+            // 1. Ensure hook library is up-to-date and not corrupted (<2ms)
+            // 2. Clear stale socket/lock files from tmp (<1ms)
+            try {
+                BootstrapManager.ensureHookLibrary(this, root)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup ensureHookLibrary failed", e)
+            }
+            try {
+                BootstrapManager.cleanupStaleSocketsAndLocks(root, homeDir)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup cleanupStaleSocketsAndLocks failed", e)
+            }
+        }
+
         // Heavy file I/O (DNS, timezone, certs, essential binaries, xdg-open,
         // root tools) runs on a background thread. Doing it on the main thread
         // stalls onCreate, delays the first frame, and on slow devices can
@@ -236,16 +253,6 @@ class MainActivity : AppCompatActivity() {
         // exactly the blank-screen + ANR kill reported in issue #1.
         org.cortex.terminal.runtime.UrlOpenerServer.start(this)
         kotlin.concurrent.thread(name = "Cortex-StartupMaintenance") {
-            try {
-                BootstrapManager.ensureHookLibrary(this@MainActivity, root)
-            } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "Startup hook library update failed", e)
-            }
-            try {
-                BootstrapManager.cleanupStaleSocketsAndLocks(root, homeDir)
-            } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "Startup stale socket cleanup failed", e)
-            }
             try {
                 BootstrapManager.updateDnsConfiguration(this@MainActivity, root)
             } catch (e: Exception) {
@@ -333,15 +340,6 @@ class MainActivity : AppCompatActivity() {
             }
             terminalView.post {
                 terminalView.showKeyboard()
-            }
-
-            kotlin.concurrent.thread(name = "Cortex-BackgroundMaintenance") {
-                try {
-                    BootstrapManager.updateDnsConfiguration(this@MainActivity, root)
-                    BootstrapManager.fixAbsoluteSymlinks(root)
-                } catch (e: Exception) {
-                    android.util.Log.e("MainActivity", "Background maintenance error", e)
-                }
             }
         }
     }

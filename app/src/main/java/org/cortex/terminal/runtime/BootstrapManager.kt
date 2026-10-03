@@ -322,12 +322,10 @@ object BootstrapManager {
         }
 
         // File system structure initialized
-        patchAllDynamicLinkers(root)
-        fixAbsoluteSymlinks(root)
         ensureEssentialBinaries(root, home)
     }
 
-    const val CURRENT_BOOTSTRAP_VERSION = 12466
+    const val CURRENT_BOOTSTRAP_VERSION = 12467
 
     fun isBootstrapInstalled(context: Context): Boolean {
         val root = Environment.getCortexRoot(context)
@@ -560,6 +558,10 @@ object BootstrapManager {
             )
             for (dir in candidateDirs) {
                 if (!dir.exists() || !dir.isDirectory) continue
+                // Crucial: Skip directories that are themselves symlinks (e.g. root/bin -> usr/bin in merged-usr)
+                // Relativizing against a symlinked directory produces incorrect relative targets and clobbers valid links!
+                if (java.nio.file.Files.isSymbolicLink(dir.toPath())) continue
+
                 dir.listFiles()?.forEach { file ->
                     try {
                         val path = file.toPath()
@@ -570,8 +572,24 @@ object BootstrapManager {
                                 val targetInRoot = File(root, targetClean)
                                 val relTarget = file.parentFile?.toPath()?.relativize(targetInRoot.toPath())?.toString()
                                 if (relTarget != null) {
-                                    java.nio.file.Files.delete(path)
-                                    java.nio.file.Files.createSymbolicLink(path, java.nio.file.Paths.get(relTarget))
+                                    val tmpLink = File(file.parentFile, "${file.name}.ctx_link_tmp")
+                                    val tmpPath = tmpLink.toPath()
+                                    java.nio.file.Files.deleteIfExists(tmpPath)
+                                    java.nio.file.Files.createSymbolicLink(tmpPath, java.nio.file.Paths.get(relTarget))
+                                    try {
+                                        java.nio.file.Files.move(
+                                            tmpPath,
+                                            path,
+                                            java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                                            java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                                        )
+                                    } catch (e: Exception) {
+                                        java.nio.file.Files.move(
+                                            tmpPath,
+                                            path,
+                                            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -637,11 +655,30 @@ object BootstrapManager {
             }
 
             if (modified) {
-                file.setWritable(true, true)
-                file.writeBytes(bytes)
+                val parent = file.parentFile ?: return
+                val tmp = File(parent, "${file.name}.ctx_patch_tmp")
+                tmp.outputStream().use { it.write(bytes) }
+                tmp.setExecutable(true, false)
+                tmp.setReadable(true, false)
+                try { android.system.Os.chmod(tmp.absolutePath, 493) } catch (e: Exception) {}
+                try {
+                    java.nio.file.Files.move(
+                        tmp.toPath(),
+                        file.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                    )
+                } catch (e: Exception) {
+                    java.nio.file.Files.move(
+                        tmp.toPath(),
+                        file.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                    )
+                }
                 file.setExecutable(true, false)
                 file.setReadable(true, false)
-                android.util.Log.i("BootstrapManager", "Successfully wrote patched linker: ${file.absolutePath}")
+                try { android.system.Os.chmod(file.absolutePath, 493) } catch (e: Exception) {}
+                android.util.Log.i("BootstrapManager", "Successfully wrote patched linker atomically: ${file.absolutePath}")
             }
         } catch (e: Exception) {
             android.util.Log.e("BootstrapManager", "Failed to patch dynamic linker: ${file.absolutePath}", e)
@@ -1002,7 +1039,19 @@ object BootstrapManager {
             val hookAssetName = if (CortexRuntime.is64Bit) "libcortex-hook-arm64.so" else "libcortex-hook-arm.so"
             val targetHook = File(root, "usr/lib/libcortex-hook.so")
             targetHook.parentFile?.mkdirs()
+
+            val targetPath = targetHook.toPath()
+            // Clean up any broken/circular symlinks created by older buggy releases
+            if (java.nio.file.Files.isSymbolicLink(targetPath)) {
+                java.nio.file.Files.deleteIfExists(targetPath)
+            }
+
             val tmpHook = File(root, "usr/lib/libcortex-hook.so.tmp")
+            val tmpPath = tmpHook.toPath()
+            if (java.nio.file.Files.isSymbolicLink(tmpPath)) {
+                java.nio.file.Files.deleteIfExists(tmpPath)
+            }
+
             context.assets.open(hookAssetName).use { inStream ->
                 tmpHook.outputStream().use { outStream ->
                     inStream.copyTo(outStream)
@@ -1012,17 +1061,43 @@ object BootstrapManager {
                 tmpHook.setExecutable(true, false)
                 tmpHook.setReadable(true, false)
                 try { android.system.Os.chmod(tmpHook.absolutePath, 493) } catch (e: Exception) {}
-                tmpHook.renameTo(targetHook)
+
+                try {
+                    java.nio.file.Files.move(
+                        tmpPath,
+                        targetPath,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                    )
+                } catch (e: Exception) {
+                    java.nio.file.Files.move(
+                        tmpPath,
+                        targetPath,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                    )
+                }
                 targetHook.setExecutable(true, false)
                 targetHook.setReadable(true, false)
                 try { android.system.Os.chmod(targetHook.absolutePath, 493) } catch (e: Exception) {}
             }
-            val libHook = File(root, "lib/libcortex-hook.so")
-            libHook.parentFile?.mkdirs()
-            try {
-                if (libHook.exists()) libHook.delete()
-                android.system.Os.symlink(targetHook.absolutePath, libHook.absolutePath)
-            } catch (e: Exception) {}
+
+            // Only link root/lib/libcortex-hook.so if root/lib is a real directory (legacy/non-merged-usr systems)
+            // On modern Ubuntu (merged-usr), root/lib is a symlink to usr/lib, so root/lib/libcortex-hook.so
+            // already resolves directly to targetHook. Deleting or symlinking inside root/lib would clobber targetHook itself!
+            val libDir = File(root, "lib")
+            if (libDir.exists() && !java.nio.file.Files.isSymbolicLink(libDir.toPath())) {
+                val libHook = File(libDir, "libcortex-hook.so")
+                val libHookPath = libHook.toPath()
+                try {
+                    if (java.nio.file.Files.isSymbolicLink(libHookPath)) {
+                        java.nio.file.Files.deleteIfExists(libHookPath)
+                    }
+                    if (libHook.exists()) {
+                        libHook.delete()
+                    }
+                    android.system.Os.symlink(targetHook.absolutePath, libHook.absolutePath)
+                } catch (e: Exception) {}
+            }
         } catch (e: Exception) {
             android.util.Log.e("BootstrapManager", "Failed to update hook library from assets", e)
         }
@@ -1394,6 +1469,9 @@ object BootstrapManager {
             val localBin = File(home, ".local/bin")
             localBin.mkdirs()
 
+            val binDir = File(root, "bin")
+            val isBinDirSymlink = binDir.exists() && java.nio.file.Files.isSymbolicLink(binDir.toPath())
+
             // 1. awk guarantee: find mawk or gawk and copy as real ELF executable
             val mawkCandidates = listOf(
                 File(root, "usr/bin/mawk"),
@@ -1402,24 +1480,39 @@ object BootstrapManager {
                 File(root, "bin/gawk")
             )
             val realAwk = mawkCandidates.firstOrNull { it.exists() && it.isFile }
-            val awkTargets = listOf(
+            val awkTargets = mutableListOf(
                 File(root, "usr/bin/awk"),
-                File(root, "bin/awk"),
                 File(localBin, "awk")
             )
+            if (binDir.exists() && !isBinDirSymlink) {
+                awkTargets.add(File(binDir, "awk"))
+            }
+
             if (realAwk != null) {
                 for (target in awkTargets) {
                     try {
-                        if (target.exists()) {
-                            if (java.nio.file.Files.isSymbolicLink(target.toPath())) {
-                                java.nio.file.Files.deleteIfExists(target.toPath())
-                            } else if (target.length() == realAwk.length()) {
-                                continue
-                            } else {
-                                target.delete()
-                            }
+                        if (target.exists() && target.canExecute()) {
+                            continue
                         }
-                        realAwk.copyTo(target, overwrite = true)
+                        val tmp = File(target.parentFile ?: continue, "${target.name}.ctx_tmp")
+                        realAwk.copyTo(tmp, overwrite = true)
+                        tmp.setReadable(true, false)
+                        tmp.setExecutable(true, false)
+                        try { android.system.Os.chmod(tmp.absolutePath, 493) } catch (e: Exception) {}
+                        try {
+                            java.nio.file.Files.move(
+                                tmp.toPath(),
+                                target.toPath(),
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                                java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                            )
+                        } catch (e: Exception) {
+                            java.nio.file.Files.move(
+                                tmp.toPath(),
+                                target.toPath(),
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                            )
+                        }
                         target.setReadable(true, false)
                         target.setExecutable(true, false)
                         try { android.system.Os.chmod(target.absolutePath, 493) } catch (e: Exception) {}
@@ -1435,26 +1528,41 @@ object BootstrapManager {
                 File(root, "bin/which.debianutils")
             )
             val realWhich = whichDebianCandidates.firstOrNull { it.exists() && it.isFile }
-            val whichTargets = listOf(
+            val whichTargets = mutableListOf(
                 File(root, "usr/bin/which"),
-                File(root, "bin/which"),
                 File(localBin, "which")
             )
+            if (binDir.exists() && !isBinDirSymlink) {
+                whichTargets.add(File(binDir, "which"))
+            }
+
             for (target in whichTargets) {
                 try {
+                    if (target.exists() && target.canExecute()) {
+                        continue
+                    }
+                    val tmp = File(target.parentFile ?: continue, "${target.name}.ctx_tmp")
                     if (realWhich != null) {
-                        if (target.exists()) {
-                            if (java.nio.file.Files.isSymbolicLink(target.toPath())) {
-                                java.nio.file.Files.deleteIfExists(target.toPath())
-                            } else if (target.length() == realWhich.length()) {
-                                continue
-                            } else {
-                                target.delete()
-                            }
-                        }
-                        realWhich.copyTo(target, overwrite = true)
-                    } else if (!target.exists() || target.length() == 0L) {
-                        target.writeText("#!/bin/sh\ncommand -v \"\$@\"\n")
+                        realWhich.copyTo(tmp, overwrite = true)
+                    } else {
+                        tmp.writeText("#!/bin/sh\ncommand -v \"\$@\"\n")
+                    }
+                    tmp.setReadable(true, false)
+                    tmp.setExecutable(true, false)
+                    try { android.system.Os.chmod(tmp.absolutePath, 493) } catch (e: Exception) {}
+                    try {
+                        java.nio.file.Files.move(
+                            tmp.toPath(),
+                            target.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                        )
+                    } catch (e: Exception) {
+                        java.nio.file.Files.move(
+                            tmp.toPath(),
+                            target.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                        )
                     }
                     target.setReadable(true, false)
                     target.setExecutable(true, false)
