@@ -251,6 +251,11 @@ class MainActivity : AppCompatActivity() {
                 android.util.Log.e("MainActivity", "Startup ensureAptSandbox failed", e)
             }
             try {
+                BootstrapManager.ensureUbuntuSources(root)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup ensureUbuntuSources failed", e)
+            }
+            try {
                 BootstrapManager.cleanupStaleSocketsAndLocks(root, homeDir)
             } catch (e: Exception) {
                 android.util.Log.e("MainActivity", "Startup cleanupStaleSocketsAndLocks failed", e)

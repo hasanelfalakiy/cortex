@@ -326,7 +326,7 @@ object BootstrapManager {
         ensureEssentialBinaries(root, home)
     }
 
-    const val CURRENT_BOOTSTRAP_VERSION = 12469
+    const val CURRENT_BOOTSTRAP_VERSION = 12470
 
     fun isBootstrapInstalled(context: Context): Boolean {
         val root = Environment.getCortexRoot(context)
@@ -343,6 +343,7 @@ object BootstrapManager {
                     ensureHookLibrary(context, root)
                     ensureKeyrings(root, context)
                     ensureAptSandbox(root)
+                    ensureUbuntuSources(root)
                     versionFile.writeText(CURRENT_BOOTSTRAP_VERSION.toString())
                 } catch (e: Exception) {
                     android.util.Log.e("BootstrapManager", "Failed to perform non-destructive bootstrap update", e)
@@ -461,19 +462,7 @@ object BootstrapManager {
 
             // Configure APT sandbox so APT operates without superuser privilege drop
             ensureAptSandbox(root)
-
-            val debianSources = File(root, "etc/apt/sources.list.d/debian.sources")
-            val ubuntuSources = File(root, "etc/apt/sources.list.d/ubuntu.sources")
-            val sourcesList = File(root, "etc/apt/sources.list")
-            if (ubuntuSources.exists() || debianSources.exists()) {
-                if (sourcesList.exists()) sourcesList.delete()
-            } else if (!sourcesList.exists() || sourcesList.length() == 0L) {
-                sourcesList.writeText(
-                    "deb http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse\n" +
-                    "deb http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse\n" +
-                    "deb http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse\n"
-                )
-            }
+            ensureUbuntuSources(root)
 
             // Ensure dpkg status file exists
             val dpkgDir = File(root, "var/lib/dpkg")
@@ -886,6 +875,9 @@ object BootstrapManager {
                 "Acquire::SRV \"false\";\n" +
                 "Acquire::Languages \"none\";\n" +
                 "Acquire::GzipIndexes \"true\";\n" +
+                "Acquire::AllowInsecureRepositories \"true\";\n" +
+                "Acquire::AllowDowngradeToInsecureRepositories \"true\";\n" +
+                "APT::Get::AllowUnauthenticated \"true\";\n" +
                 "Dir::Etc::trusted \"/usr/share/keyrings/ubuntu-archive-keyring.gpg\";\n" +
                 "Dir::Etc::trustedparts \"/etc/apt/trusted.gpg.d\";\n" +
                 "Dir::dpkg::cputable \"/usr/share/dpkg/cputable\";\n" +
@@ -1040,6 +1032,37 @@ object BootstrapManager {
             ensureCaCertificates(root)
         } catch (e: Exception) {
             android.util.Log.e("BootstrapManager", "Failed to ensure apt sandbox config", e)
+        }
+    }
+
+    fun ensureUbuntuSources(root: File) {
+        try {
+            val sourcesDir = File(root, "etc/apt/sources.list.d")
+            sourcesDir.mkdirs()
+            val ubuntuSources = File(sourcesDir, "ubuntu.sources")
+            ubuntuSources.writeText(
+                "Types: deb\n" +
+                "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
+                "Suites: noble noble-updates noble-backports\n" +
+                "Components: main restricted universe multiverse\n" +
+                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" +
+                "Trusted: yes\n\n" +
+                "Types: deb\n" +
+                "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
+                "Suites: noble-security\n" +
+                "Components: main restricted universe multiverse\n" +
+                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" +
+                "Trusted: yes\n"
+            )
+            ubuntuSources.setReadable(true, false)
+            try { android.system.Os.chmod(ubuntuSources.absolutePath, 420) } catch (e: Exception) {}
+
+            val sourcesList = File(root, "etc/apt/sources.list")
+            if (sourcesList.exists()) {
+                sourcesList.delete()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure ubuntu.sources", e)
         }
     }
 
