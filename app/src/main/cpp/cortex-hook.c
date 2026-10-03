@@ -2175,6 +2175,7 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
     init_cortex_hook();
     int count = 0;
     int has_preload = 0;
+    int has_ld_library_path = 0;
     int has_root = 0;
     int has_tunables = 0;
     int has_path = 0;
@@ -2196,6 +2197,8 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
     while (envp && envp[count]) {
         if (strncmp(envp[count], "LD_PRELOAD=", 11) == 0) {
             has_preload = 1;
+        } else if (strncmp(envp[count], "LD_LIBRARY_PATH=", 16) == 0) {
+            has_ld_library_path = 1;
         } else if (strncmp(envp[count], "CORTEX_ROOT=", 12) == 0) {
             has_root = 1;
         } else if (strncmp(envp[count], "GLIBC_TUNABLES=", 15) == 0) {
@@ -2242,6 +2245,14 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
         char *str = malloc(PATH_MAX + 16);
         if (str) {
             snprintf(str, PATH_MAX + 16, "LD_PRELOAD=%s", hook_path);
+            new_env[dst++] = str;
+        }
+    }
+    if (!has_ld_library_path && g_cortex_root[0] != '\0') {
+        char *str = malloc(PATH_MAX * 4);
+        if (str) {
+            snprintf(str, PATH_MAX * 4, "LD_LIBRARY_PATH=%s/lib:%s/usr/lib:%s/lib/aarch64-linux-gnu:%s/usr/lib/aarch64-linux-gnu:%s/lib/arm-linux-gnueabihf:%s/usr/lib/arm-linux-gnueabihf:%s/usr/local/lib",
+                     g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root);
             new_env[dst++] = str;
         }
     }

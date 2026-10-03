@@ -487,5 +487,36 @@ syntax "default"
 EOFNANO
 chmod 0644 extra-rootfs/usr/share/nano/default.nanorc
 
+cat << 'EOFMUSE' > extra-rootfs/usr/local/bin/muse
+#!/bin/bash
+if [ -x "$HOME/.local/bin/muse" ]; then
+    exec "$HOME/.local/bin/muse" "$@"
+fi
+for cand in "$HOME/.local/bin/muse-bin-"* "/home/.local/bin/muse-bin-"*; do
+    if [ -x "$cand" ]; then
+        exec "$cand" "$@"
+    fi
+done
+if [ -f "$HOME/.local/bin/muse" ]; then
+    exec "$HOME/.local/bin/muse" "$@"
+fi
+exec /home/.local/bin/muse "$@"
+EOFMUSE
+chmod 0755 extra-rootfs/usr/local/bin/muse
+
+mkdir -p extra-rootfs/etc/profile.d
+cat << 'EOFENV' > extra-rootfs/etc/profile.d/00-env.sh
+if [ -z "$CORTEX_ROOT" ]; then
+    if [ -d "$HOME/../etc" ]; then
+        export CORTEX_ROOT="$(cd "$HOME/.." && pwd)"
+    fi
+fi
+if [ -n "$CORTEX_ROOT" ]; then
+    export LD_LIBRARY_PATH="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib"
+    export LD_PRELOAD="$CORTEX_ROOT/usr/lib/libcortex-hook.so"
+fi
+EOFENV
+chmod 0644 extra-rootfs/etc/profile.d/00-env.sh
+
 chmod 0755 extra-rootfs/usr/local/bin/*
-echo "extra-rootfs service, browser, and root tools prepared successfully."
+echo "extra-rootfs service, browser, root tools, and muse prepared successfully."
