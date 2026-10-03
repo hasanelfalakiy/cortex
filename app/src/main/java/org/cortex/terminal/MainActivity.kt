@@ -237,6 +237,16 @@ class MainActivity : AppCompatActivity() {
         org.cortex.terminal.runtime.UrlOpenerServer.start(this)
         kotlin.concurrent.thread(name = "Cortex-StartupMaintenance") {
             try {
+                BootstrapManager.ensureHookLibrary(this@MainActivity, root)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup hook library update failed", e)
+            }
+            try {
+                BootstrapManager.cleanupStaleSocketsAndLocks(root, homeDir)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup stale socket cleanup failed", e)
+            }
+            try {
                 BootstrapManager.updateDnsConfiguration(this@MainActivity, root)
             } catch (e: Exception) {
                 android.util.Log.e("MainActivity", "Startup DNS update failed", e)

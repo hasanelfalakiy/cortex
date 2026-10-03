@@ -314,7 +314,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.65"
+          VERSION="v1.24.66"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -325,18 +325,16 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.65 — Native Landlock, Seccomp & AI CLI Support
+          ### Cortex Release v1.24.66 — Seamless OpenCode & Native Bun/Node Self-Spawn Engine
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.65:
-          - **Seamless Native AI CLI Support (Meta Muse Code, Claude Code, etc.)**: Fixed the fatal `Bad system call` (`SIGSYS` / Signal 31) error that occurred when launching modern AI CLI agents after workspace approval.
-          - **Master `syscall()` Interception Layer (`libcortex-hook.so`)**: Added direct userspace hooking for `syscall()` to intercept unsupported or blocked kernel calls before they ever reach the CPU syscall instruction (`svc #0`), executing in nanoseconds with zero overhead:
-            - **Landlock LSM**: Intercepts `landlock_create_ruleset`, `landlock_add_rule`, and `landlock_restrict_self` (syscalls 444, 445, 446). Provides Landlock ABI version 1 probing and mock descriptor emulation (or `-ENOSYS` fallback via `CORTEX_LANDLOCK_ENOSYS=1`).
-            - **Seccomp Filters**: Intercepts `seccomp` (syscall 277/317/383) and `prctl(PR_SET_SECCOMP, ...)` to satisfy security cages without triggering kernel traps.
-            - **User Namespaces**: Intercepts `unshare` and `setns` to allow unprivileged sandbox runners to proceed smoothly without `EPERM`.
-            - **Kernel 4.x / 5.x Syscall Fallbacks**: Gracefully redirects `clone3` to classic `clone`, intercepts `pidfd_open`/`pidfd_send_signal`/`pidfd_getfd`, safely handles `close_range`, and routes `statx`/`faccessat2` through Cortex path redirection.
-          - **Bulletproof `SIGSYS` Handler with PC Advancement**: Enhanced `cortex_sigsys_handler` to inspect `ucontext_t` machine registers, decode blocked syscall numbers, and automatically advance the program counter (`pc += 4` on ARM64, `RIP += 2` on x86_64, `arm_pc += 2/4` on ARM32) past the trapping `svc #0` instruction, eliminating infinite signal loops and kernel aborts. Removed `SA_NODEFER` for safe signal deferral.
+          #### What's New in v1.24.66:
+          - **Complete Fix for OpenCode & Bun/Node Self-Spawning (Code 127 Resolved)**: Intercepted `/proc/self/exe`, `/proc/thread-self/exe`, and `/proc/<pid>/exe` across `readlink`, `readlinkat`, `realpath`, and `syscall(__NR_readlinkat)`. Bun and Node now reliably obtain their actual binary path (`process.execPath`) instead of falling back to the dynamic linker (`ld-linux-aarch64.so.1`), completely fixing `Error: Server process exited with code 127: serve: error while loading shared libraries: serve: cannot open shared object file: No such file or directory`.
+          - **Eliminated Process Completed (Code -11 / SIGSEGV) Crashes**: Added deterministic UNIX domain socket path hashing (`rewrite_unix_socket_path`) preventing `struct sockaddr_un` (108-byte limit) buffer overflows and path truncations. Automatic startup cleanup purges orphaned socket and lock files (`.sock`, `.pid`, `.lock`) across `/tmp`, `~/.local/share/opencode`, and `~/.cache/opencode` following phone reboots or crashes.
+          - **Non-Destructive Seamless APK Updates ("Updates don't break OpenCode")**: Made APK updates 100% non-destructive. `BootstrapManager` now dynamically updates `libcortex-hook.so` atomically on every launch (`ensureHookLibrary`) without re-extracting base archives or overwriting user-installed packages, Bun/Node dependencies, and configurations.
+          - **POSIX-Compliant `posix_spawnp` & PATH Resolution**: Fixed command resolution in `posix_spawnp` to return `ENOENT` directly when unslashed binaries are absent from `PATH`, eliminating zombie child forks with exit code 127.
+          - **Inherited `CORTEX_REAL_EXE` Environment Management**: `prepare_cortex_env` dynamically tracks and updates `CORTEX_REAL_EXE` across nested subprocess chains (`execve`, `posix_spawn`), ensuring deep process trees always resolve their correct executable identities.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)

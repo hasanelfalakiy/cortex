@@ -327,20 +327,29 @@ object BootstrapManager {
         ensureEssentialBinaries(root, home)
     }
 
-    private const val CURRENT_BOOTSTRAP_VERSION = 12463
+    const val CURRENT_BOOTSTRAP_VERSION = 12466
 
     fun isBootstrapInstalled(context: Context): Boolean {
         val root = Environment.getCortexRoot(context)
         val apt = File(root, "usr/bin/apt")
         val bash = File(root, "usr/bin/bash")
-        val hook = File(root, "usr/lib/libcortex-hook.so")
-        val versionFile = File(root, ".cortex_version")
 
-        if (!apt.exists() || !bash.exists() || !hook.exists() || !versionFile.exists()) {
-            return false
+        if (apt.exists() && bash.exists()) {
+            val versionFile = File(root, ".cortex_version")
+            val ver = if (versionFile.exists()) versionFile.readText().trim().toIntOrNull() ?: 0 else 0
+            if (ver < CURRENT_BOOTSTRAP_VERSION) {
+                // Non-destructive update: refresh hook library and version marker
+                // Never re-extract base bootstrap archive over user-installed packages
+                try {
+                    ensureHookLibrary(context, root)
+                    versionFile.writeText(CURRENT_BOOTSTRAP_VERSION.toString())
+                } catch (e: Exception) {
+                    android.util.Log.e("BootstrapManager", "Failed to perform non-destructive bootstrap update", e)
+                }
+            }
+            return true
         }
-        val ver = versionFile.readText().trim().toIntOrNull() ?: 0
-        return ver >= CURRENT_BOOTSTRAP_VERSION
+        return false
     }
 
     fun findBootstrapAsset(context: Context): String? {
@@ -988,22 +997,85 @@ object BootstrapManager {
         }
     }
 
-    private fun ensureHookLibrary(context: Context, root: File) {
+    fun ensureHookLibrary(context: Context, root: File) {
         try {
             val hookAssetName = if (CortexRuntime.is64Bit) "libcortex-hook-arm64.so" else "libcortex-hook-arm.so"
             val targetHook = File(root, "usr/lib/libcortex-hook.so")
             targetHook.parentFile?.mkdirs()
+            val tmpHook = File(root, "usr/lib/libcortex-hook.so.tmp")
             context.assets.open(hookAssetName).use { inStream ->
-                targetHook.outputStream().use { outStream ->
+                tmpHook.outputStream().use { outStream ->
                     inStream.copyTo(outStream)
                 }
             }
-            if (targetHook.exists()) {
+            if (tmpHook.exists() && tmpHook.length() > 0) {
+                tmpHook.setExecutable(true, false)
+                tmpHook.setReadable(true, false)
+                try { android.system.Os.chmod(tmpHook.absolutePath, 493) } catch (e: Exception) {}
+                tmpHook.renameTo(targetHook)
                 targetHook.setExecutable(true, false)
                 targetHook.setReadable(true, false)
+                try { android.system.Os.chmod(targetHook.absolutePath, 493) } catch (e: Exception) {}
+            }
+            val libHook = File(root, "lib/libcortex-hook.so")
+            libHook.parentFile?.mkdirs()
+            try {
+                if (libHook.exists()) libHook.delete()
+                android.system.Os.symlink(targetHook.absolutePath, libHook.absolutePath)
+            } catch (e: Exception) {}
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to update hook library from assets", e)
+        }
+    }
+
+    fun cleanupStaleSocketsAndLocks(root: File, home: File) {
+        try {
+            val tmpDir = File(root, "tmp")
+            if (tmpDir.exists() && tmpDir.isDirectory) {
+                tmpDir.listFiles()?.forEach { file ->
+                    val name = file.name
+                    if (name.endsWith(".sock") || name.endsWith(".socket") ||
+                        name.endsWith(".lock") || name.endsWith(".pid") ||
+                        name.startsWith(".ctx_sock_") || name.startsWith("opencode") ||
+                        name.startsWith("bun-") || name.startsWith("node-")) {
+                        try {
+                            file.deleteRecursively()
+                        } catch (e: Exception) {}
+                    }
+                }
+            } else {
+                tmpDir.mkdirs()
+            }
+            try {
+                android.system.Os.chmod(tmpDir.absolutePath, 1023) // 01777 (rwxrwxrwt sticky)
+            } catch (e: Exception) {}
+
+            val opencodeDataDir = File(home, ".local/share/opencode")
+            if (opencodeDataDir.exists() && opencodeDataDir.isDirectory) {
+                opencodeDataDir.listFiles()?.forEach { file ->
+                    val name = file.name
+                    if (name.endsWith(".sock") || name.endsWith(".socket") ||
+                        name.endsWith(".lock") || name.endsWith(".pid")) {
+                        try {
+                            file.deleteRecursively()
+                        } catch (e: Exception) {}
+                    }
+                }
+            }
+
+            val opencodeCacheDir = File(home, ".cache/opencode")
+            if (opencodeCacheDir.exists() && opencodeCacheDir.isDirectory) {
+                opencodeCacheDir.listFiles()?.forEach { file ->
+                    val name = file.name
+                    if (name.endsWith(".sock") || name.endsWith(".lock") || name.endsWith(".pid")) {
+                        try {
+                            file.deleteRecursively()
+                        } catch (e: Exception) {}
+                    }
+                }
             }
         } catch (e: Exception) {
-            android.util.Log.e("BootstrapManager", "Failed to copy hook library from assets", e)
+            android.util.Log.e("BootstrapManager", "Failed to cleanup stale sockets and locks", e)
         }
     }
 

@@ -223,6 +223,7 @@ int rt_sigprocmask(int how, const sigset_t *set, sigset_t *oldset, size_t sigset
 
 
 static char g_cortex_root[PATH_MAX] = {0};
+static char g_real_exe[PATH_MAX] = {0};
 static int g_initialized = 0;
 
 static void init_cortex_hook(void) {
@@ -246,6 +247,10 @@ static void init_cortex_hook(void) {
                 }
             }
         }
+    }
+    const char *curr_real_exe = getenv("CORTEX_REAL_EXE");
+    if (curr_real_exe && curr_real_exe[0] != '\0') {
+        strncpy(g_real_exe, curr_real_exe, sizeof(g_real_exe) - 1);
     }
     if (g_cortex_root[0] != '\0') {
         const char *curr_tzdir = getenv("TZDIR");
@@ -301,6 +306,75 @@ void tzset(void) {
         }
     }
     if (orig_tzset) orig_tzset();
+}
+
+static int is_proc_self_exe(const char *path) {
+    if (!path) return 0;
+    if (strcmp(path, "/proc/self/exe") == 0 ||
+        strcmp(path, "/proc/thread-self/exe") == 0) {
+        return 1;
+    }
+    if (strncmp(path, "/proc/", 6) == 0) {
+        const char *p = path + 6;
+        while (*p >= '0' && *p <= '9') p++;
+        if (strcmp(p, "/exe") == 0) {
+            pid_t pid = (pid_t)atoi(path + 6);
+            if (pid == getpid()) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static ssize_t handle_proc_self_exe(char *buf, size_t bufsiz) {
+    if (!buf || bufsiz == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    init_cortex_hook();
+    if (g_real_exe[0] == '\0') {
+        int fd = open("/proc/self/cmdline", O_RDONLY);
+        if (fd >= 0) {
+            char cmdline[4096];
+            ssize_t n = read(fd, cmdline, sizeof(cmdline) - 1);
+            close(fd);
+            if (n > 0) {
+                cmdline[n] = '\0';
+                char *args[8] = {0};
+                int ac = 0;
+                char *p = cmdline;
+                while (p < cmdline + n && ac < 8) {
+                    args[ac++] = p;
+                    p += strlen(p) + 1;
+                }
+                if (ac >= 4 && strcmp(args[1], "--argv0") == 0) {
+                    strncpy(g_real_exe, args[3], sizeof(g_real_exe) - 1);
+                }
+            }
+        }
+    }
+
+    if (g_real_exe[0] != '\0') {
+        char stripped[PATH_MAX];
+        const char *out_path = g_real_exe;
+        if (g_cortex_root[0] != '\0') {
+            size_t rlen = strlen(g_cortex_root);
+            if (strncmp(g_real_exe, g_cortex_root, rlen) == 0 &&
+                (g_real_exe[rlen] == '/' || g_real_exe[rlen] == '\0')) {
+                out_path = g_real_exe + rlen;
+                if (out_path[0] == '\0') out_path = "/";
+            }
+        }
+        strncpy(stripped, out_path, sizeof(stripped) - 1);
+        stripped[sizeof(stripped) - 1] = '\0';
+
+        size_t len = strlen(stripped);
+        size_t copy_len = (len < bufsiz) ? len : bufsiz;
+        memcpy(buf, stripped, copy_len);
+        return (ssize_t)copy_len;
+    }
+    return -1;
 }
 
 static inline int is_path_prefix(const char *path, const char *prefix, size_t prefix_len) {
@@ -384,6 +458,63 @@ static const char *rewrite_path(const char *path, char *buffer, size_t bufsize) 
     }
 
     return path;
+}
+
+static const char *rewrite_unix_socket_path(const char *sun_path, char *out_buf, size_t out_size) {
+    if (!sun_path || out_size == 0) return sun_path;
+    // Abstract sockets start with null byte (\0); leave untouched
+    if (sun_path[0] == '\0') {
+        return sun_path;
+    }
+
+    char full[PATH_MAX];
+    const char *rw = (sun_path[0] == '/') ? rewrite_path(sun_path, full, sizeof(full)) : sun_path;
+    size_t rw_len = strlen(rw);
+
+    // If rewritten path fits safely in sockaddr_un.sun_path (usually 108 bytes)
+    if (rw_len < out_size) {
+        strncpy(out_buf, rw, out_size - 1);
+        out_buf[out_size - 1] = '\0';
+        return out_buf;
+    }
+
+    // Path exceeds sockaddr_un 108-byte limit!
+    // Deterministically hash the path into /tmp to guarantee it fits safely (< 80 bytes)
+    // while remaining 100% deterministic between server and client.
+    unsigned long long hash = 14695981039346656037ULL;
+    for (const char *p = rw; *p; p++) {
+        hash ^= (unsigned char)(*p);
+        hash *= 1099511628211ULL;
+    }
+
+    init_cortex_hook();
+    if (g_cortex_root[0] != '\0') {
+        snprintf(out_buf, out_size, "%s/tmp/.ctx_sock_%016llx", g_cortex_root, hash);
+    } else {
+        snprintf(out_buf, out_size, "/tmp/.ctx_sock_%016llx", hash);
+    }
+    out_buf[out_size - 1] = '\0';
+    return out_buf;
+}
+
+static void unlink_mapped_unix_socket(const char *target) {
+    if (!target) return;
+    size_t t_len = strlen(target);
+    if (t_len >= 107) {
+        unsigned long long hash = 14695981039346656037ULL;
+        for (const char *p = target; *p; p++) {
+            hash ^= (unsigned char)(*p);
+            hash *= 1099511628211ULL;
+        }
+        char short_path[PATH_MAX];
+        init_cortex_hook();
+        if (g_cortex_root[0] != '\0') {
+            snprintf(short_path, sizeof(short_path), "%s/tmp/.ctx_sock_%016llx", g_cortex_root, hash);
+        } else {
+            snprintf(short_path, sizeof(short_path), "/tmp/.ctx_sock_%016llx", hash);
+        }
+        unlink(short_path);
+    }
 }
 
 #ifndef O_TMPFILE
@@ -958,6 +1089,7 @@ int unlink(const char *pathname) {
     if (!orig_unlink) orig_unlink = (int (*)(const char *))dlsym(RTLD_NEXT, "unlink");
     char buf[PATH_MAX];
     const char *target = rewrite_path(pathname, buf, sizeof(buf));
+    unlink_mapped_unix_socket(target);
     return orig_unlink(target);
 }
 
@@ -967,6 +1099,7 @@ int unlinkat(int dirfd, const char *pathname, int flags) {
     if (!orig_unlinkat) orig_unlinkat = (int (*)(int, const char *, int))dlsym(RTLD_NEXT, "unlinkat");
     char buf[PATH_MAX];
     const char *target = (pathname && pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
+    if (target) unlink_mapped_unix_socket(target);
     return orig_unlinkat(dirfd, target, flags);
 }
 
@@ -1035,6 +1168,10 @@ int renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpa
 
 // Hook readlink
 ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
+    if (is_proc_self_exe(pathname)) {
+        ssize_t exe_len = handle_proc_self_exe(buf, bufsiz);
+        if (exe_len >= 0) return exe_len;
+    }
     static ssize_t (*orig_readlink)(const char *, char *, size_t) = NULL;
     if (!orig_readlink) orig_readlink = (ssize_t (*)(const char *, char *, size_t))dlsym(RTLD_NEXT, "readlink");
     char pbuf[PATH_MAX];
@@ -1064,6 +1201,10 @@ ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
 
 // Hook readlinkat
 ssize_t readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
+    if (is_proc_self_exe(pathname)) {
+        ssize_t exe_len = handle_proc_self_exe(buf, bufsiz);
+        if (exe_len >= 0) return exe_len;
+    }
     static ssize_t (*orig_readlinkat)(int, const char *, char *, size_t) = NULL;
     if (!orig_readlinkat) orig_readlinkat = (ssize_t (*)(int, const char *, char *, size_t))dlsym(RTLD_NEXT, "readlinkat");
     char pbuf[PATH_MAX];
@@ -1259,6 +1400,20 @@ char *realpath(const char *path, char *resolved_path) {
         return NULL;
     }
     init_cortex_hook();
+    if (is_proc_self_exe(path)) {
+        char tmp[PATH_MAX];
+        ssize_t n = handle_proc_self_exe(tmp, sizeof(tmp) - 1);
+        if (n > 0) {
+            tmp[n] = '\0';
+            if (resolved_path) {
+                strncpy(resolved_path, tmp, PATH_MAX - 1);
+                resolved_path[PATH_MAX - 1] = '\0';
+                return resolved_path;
+            } else {
+                return strdup(tmp);
+            }
+        }
+    }
     char pbuf[PATH_MAX];
     const char *target = rewrite_path(path, pbuf, sizeof(pbuf));
     char *res = orig_realpath ? orig_realpath(target, resolved_path) : NULL;
@@ -1788,6 +1943,17 @@ long syscall(long number, ...) {
     unsigned long arg6 = va_arg(ap, unsigned long);
     va_end(ap);
 
+#if defined(__NR_readlinkat)
+    if (number == __NR_readlinkat) {
+        return (long)readlinkat((int)arg1, (const char *)arg2, (char *)arg3, (size_t)arg4);
+    }
+#endif
+#if defined(__NR_readlink)
+    if (number == __NR_readlink) {
+        return (long)readlink((const char *)arg1, (char *)arg2, (size_t)arg3);
+    }
+#endif
+
 #ifdef __NR_landlock_create_ruleset
     if (number == __NR_landlock_create_ruleset) {
         return (long)landlock_create_ruleset((const void *)arg1, (size_t)arg2, (uint32_t)arg3);
@@ -1994,7 +2160,7 @@ static char **clean_env_for_system(char *const envp[]) {
     return new_env;
 }
 
-static char **prepare_cortex_env(char *const envp[]) {
+static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
     init_cortex_hook();
     int count = 0;
     int has_preload = 0;
@@ -2008,17 +2174,22 @@ static char **prepare_cortex_env(char *const envp[]) {
     int has_frontend = 0;
     int has_debconf_frontend = 0;
     int has_debconf_seen = 0;
+    int has_real_exe = 0;
 
     char hook_path[PATH_MAX] = {0};
     if (g_cortex_root[0] != '\0') {
         snprintf(hook_path, sizeof(hook_path), "%s/usr/lib/libcortex-hook.so", g_cortex_root);
     }
 
+    const char *chosen_real_exe = (real_exe && real_exe[0] != '\0') ? real_exe : (g_real_exe[0] != '\0' ? g_real_exe : NULL);
+
     while (envp && envp[count]) {
         if (strncmp(envp[count], "LD_PRELOAD=", 11) == 0) {
             has_preload = 1;
         } else if (strncmp(envp[count], "CORTEX_ROOT=", 12) == 0) {
             has_root = 1;
+        } else if (strncmp(envp[count], "CORTEX_REAL_EXE=", 16) == 0) {
+            has_real_exe = 1;
         } else if (strncmp(envp[count], "GLIBC_TUNABLES=", 15) == 0) {
             has_tunables = 1;
         } else if (strncmp(envp[count], "PATH=", 5) == 0) {
@@ -2041,10 +2212,22 @@ static char **prepare_cortex_env(char *const envp[]) {
         count++;
     }
 
-    char **new_env = calloc(count + 16, sizeof(char *));
+    char **new_env = calloc(count + 20, sizeof(char *));
     int dst = 0;
     for (int i = 0; i < count; i++) {
+        // If we have an explicit real executable, drop the inherited entry to replace with the fresh target
+        if (chosen_real_exe && strncmp(envp[i], "CORTEX_REAL_EXE=", 16) == 0) {
+            continue;
+        }
         new_env[dst++] = envp[i];
+    }
+
+    if (chosen_real_exe) {
+        char *str = malloc(PATH_MAX + 32);
+        if (str) {
+            snprintf(str, PATH_MAX + 32, "CORTEX_REAL_EXE=%s", chosen_real_exe);
+            new_env[dst++] = str;
+        }
     }
 
     if (!has_preload && hook_path[0] != '\0') {
@@ -2155,6 +2338,10 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
                     chmod(ld_so, 0755);
                     chmod(target, 0755);
 
+                    strncpy(g_real_exe, target, sizeof(g_real_exe) - 1);
+                    g_real_exe[sizeof(g_real_exe) - 1] = '\0';
+                    setenv("CORTEX_REAL_EXE", target, 1);
+
                     char *const *arg_ptr = argv;
                     int argc = 0;
                     while (arg_ptr && *arg_ptr) {
@@ -2174,7 +2361,7 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
                         new_argv[i + 3] = argv[i];
                     }
                     new_argv[argc + 3] = NULL;
-                    return orig_execve(ld_so, new_argv, prepare_cortex_env(envp));
+                    return orig_execve(ld_so, new_argv, prepare_cortex_env(envp, target));
                 }
             }
 
@@ -2226,7 +2413,7 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
                     char **sys_env = clean_env_for_system(envp);
                     return orig_execve(rewritten_interp, new_argv, sys_env);
                 }
-                return execve(rewritten_interp, new_argv, prepare_cortex_env(envp));
+                return execve(rewritten_interp, new_argv, prepare_cortex_env(envp, NULL));
             }
         }
     } else {
@@ -2235,7 +2422,7 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
         return orig_execve(target, argv, sys_env);
     }
 
-    return orig_execve(target, argv, prepare_cortex_env(envp));
+    return orig_execve(target, argv, prepare_cortex_env(envp, target));
 }
 
 extern char **environ;
@@ -2481,6 +2668,10 @@ int posix_spawn(pid_t *pid, const char *path,
         }
     }
 
+    if (target && target[0] != '\0') {
+        setenv("CORTEX_REAL_EXE", target, 1);
+    }
+
     int ret = -1;
     if (is_elf && access(ld_so, F_OK) == 0 && strcmp(target, ld_so) != 0) {
         chmod(ld_so, 0755);
@@ -2503,12 +2694,14 @@ int posix_spawn(pid_t *pid, const char *path,
             }
             new_argv[argc + 3] = NULL;
 
+            char **new_envp = prepare_cortex_env(envp ? envp : environ, target);
             if (orig_posix_spawn) {
                 ret = orig_posix_spawn(pid, ld_so, file_actions, attrp, new_argv, new_envp);
             }
             free(new_argv);
         }
     } else {
+        char **new_envp = prepare_cortex_env(envp ? envp : environ, target);
         if (orig_posix_spawn) {
             ret = orig_posix_spawn(pid, target, file_actions, attrp, argv, new_envp);
         }
@@ -2519,6 +2712,7 @@ int posix_spawn(pid_t *pid, const char *path,
         if (child < 0) {
             return errno;
         } else if (child == 0) {
+            char **new_envp = prepare_cortex_env(envp ? envp : environ, target);
             execve(target, argv, new_envp);
             _exit(127);
         } else {
@@ -2571,7 +2765,8 @@ int posix_spawnp(pid_t *pid, const char *file,
             return posix_spawn(pid, candidate, file_actions, attrp, argv, envp);
         }
     }
-    return posix_spawn(pid, file, file_actions, attrp, argv, envp);
+    // If not found in PATH or standard paths, return ENOENT without spawning zombie
+    return ENOENT;
 }
 
 // DNS resolution hooking and localhost DNS redirect
@@ -3010,11 +3205,11 @@ int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 
     if (addr && addrlen >= sizeof(sa_family_t) && addr->sa_family == AF_UNIX) {
         const struct sockaddr_un *sun = (const struct sockaddr_un *)addr;
-        if (sun->sun_path[0] == '/') {
+        if (sun->sun_path[0] != '\0') {
             struct sockaddr_un mod_sun;
             memset(&mod_sun, 0, sizeof(mod_sun));
             mod_sun.sun_family = AF_UNIX;
-            rewrite_path(sun->sun_path, mod_sun.sun_path, sizeof(mod_sun.sun_path));
+            rewrite_unix_socket_path(sun->sun_path, mod_sun.sun_path, sizeof(mod_sun.sun_path));
             return orig_bind ? orig_bind(sockfd, (struct sockaddr *)&mod_sun, sizeof(mod_sun)) : -1;
         }
     }
@@ -3027,11 +3222,11 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 
     if (addr && addrlen >= sizeof(sa_family_t) && addr->sa_family == AF_UNIX) {
         const struct sockaddr_un *sun = (const struct sockaddr_un *)addr;
-        if (sun->sun_path[0] == '/') {
+        if (sun->sun_path[0] != '\0') {
             struct sockaddr_un mod_sun;
             memset(&mod_sun, 0, sizeof(mod_sun));
             mod_sun.sun_family = AF_UNIX;
-            rewrite_path(sun->sun_path, mod_sun.sun_path, sizeof(mod_sun.sun_path));
+            rewrite_unix_socket_path(sun->sun_path, mod_sun.sun_path, sizeof(mod_sun.sun_path));
             return orig_connect ? orig_connect(sockfd, (struct sockaddr *)&mod_sun, sizeof(mod_sun)) : -1;
         }
     }
