@@ -302,6 +302,7 @@ object BootstrapManager {
         ensureHosts(root)
         ensureNsswitch(root)
         ensureCaCertificates(root, context)
+        ensureKeyrings(root, context)
         ensurePasswd(root, home)
         ensureReloadScripts(root, home)
         updateTimezone(context, root)
@@ -325,7 +326,7 @@ object BootstrapManager {
         ensureEssentialBinaries(root, home)
     }
 
-    const val CURRENT_BOOTSTRAP_VERSION = 12467
+    const val CURRENT_BOOTSTRAP_VERSION = 12468
 
     fun isBootstrapInstalled(context: Context): Boolean {
         val root = Environment.getCortexRoot(context)
@@ -340,6 +341,7 @@ object BootstrapManager {
                 // Never re-extract base bootstrap archive over user-installed packages
                 try {
                     ensureHookLibrary(context, root)
+                    ensureKeyrings(root, context)
                     versionFile.writeText(CURRENT_BOOTSTRAP_VERSION.toString())
                 } catch (e: Exception) {
                     android.util.Log.e("BootstrapManager", "Failed to perform non-destructive bootstrap update", e)
@@ -486,6 +488,7 @@ object BootstrapManager {
             ensureHosts(root)
             ensureNsswitch(root)
             ensureCaCertificates(root, context)
+            ensureKeyrings(root, context)
             cleanupAptArtifacts(root)
             initializeFileSystem(context)
 
@@ -882,6 +885,8 @@ object BootstrapManager {
                 "Acquire::SRV \"false\";\n" +
                 "Acquire::Languages \"none\";\n" +
                 "Acquire::GzipIndexes \"true\";\n" +
+                "Dir::Etc::trusted \"/usr/share/keyrings/ubuntu-archive-keyring.gpg\";\n" +
+                "Dir::Etc::trustedparts \"/etc/apt/trusted.gpg.d\";\n" +
                 "Dir::dpkg::cputable \"/usr/share/dpkg/cputable\";\n" +
                 "Dir::dpkg::tupletable \"/usr/share/dpkg/tupletable\";\n" +
                 "Dir::dpkg::triplettable \"/usr/share/dpkg/triplettable\";\n" +
@@ -1407,6 +1412,95 @@ object BootstrapManager {
             android.util.Log.e("BootstrapManager", "Failed to ensure CA certificates", e)
         }
     }
+
+    private const val UBUNTU_ARCHIVE_KEYRING_BASE64 = "mQINBE+tgXgBEADfiL1KNFHT4H4Dw0OR9LemR8ebsFl+b9E44IpGhgWYDufj0gaM/UJ1Ti3bHfRT39VVZ6cv1P4mQy0bnAKFbYz/wo+GhzjBWtn6dThYv7n+KL8bptSCXgg1a6en8dCCIA/pwtS2Ut/g4Eu6Z467dvYNlMgCqvg+prKIrXf5ibio48j3AFvd1dDJl2cHfyuON35/83vXKXz0FPohQ7N7kPfI+qrlGBYGWFzC/QEGje360Q2Yo+rfMoyDEXmPsoZVqf7EE8gjfnXiRqmz/Bg5YQb5bgnGbLGiHWtjS+ACIdLUq/h+jlSp57jw8oQktMh2xVMX4utDM0UENeZnPllVJSlR0b+ZmZz7paeSar8Yxn4wsNlL7GZbpW5A/WmcmWfuMYoPhBo5Fq1V2/siKNU3UKuf1KH+X0p1oZ4oOcZ2bS0Zh3YEG8IQce9Bferq4QMKsekcG9IKS6WBIU7BwaElI2ILD0gSwu8KzvNSEeIJhYSsBIEzrWxIBXoN2AC9PCqqXkWlI5Xr/86RWllB3CsoPwEfO8CLJW2LlXTen/Fkq4wT+apdhHeiWiSsq/J5OEff0rKHBQ3fK7fyVuVNrJFb2CopaBLyCxTupvxs162jjUNopt0c7OqNBoPoUoVFAxUSpeEwAw6xrM5vROyLMSeh/YnTuRy8WviRapZCYo6naTCY5wARAQABsAwAAGdwZwEAAAAAAAC0QlVidW50dSBBcmNoaXZlIEF1dG9tYXRpYyBTaWduaW5nIEtleSAoMjAxMikgPGZ0cG1hc3RlckB1YnVudHUuY29tPrAMAABncGcCAAAAAAAAiQI4BBMBAgAiBQJPrYF4AhsDBgsJCAcDAgYVCAIJCgsEFgIDAQIeAQIXgAAKCRA7T+aswLIfMl1+EACR1HSunmDMiXKxT98il7VGEDKWh0TP35aKmbThYZZnC1TIATTq9Hi7wVNCXGcmaRzL2XIkwwTFl/CLQmFY0Xo39CtJT7xx0RmhO7eiR1VAns5zWwzJzj2FcJVSXWSzmuj5hOVl1V6ZPLkwPL5ukTtq0tt7xO1NKUJVftRlVzFh+GS42kLP05u8Hb0cXqk27XzhHhxi45rKIdHqx38zFeMAP/WavOls7iUtR8V0ejmAwt/2kF+wsWE9TEMRMPzzm5x7ZJdz0TFnU1u30kLbpRF86a9vyQnr+jH3PFMtGg9454PW8lZPRqXTRRIxoGlKo6smaLL8AGeP3ZkY5jBIm13jVBgvB3lgt1jlVfC/w4gPpoiZcD78D4gNWbigSOQPFRdKzR1u0FbBvJEPjwx4EXbJoac0kYMpDdT4CulMUnCl/C6jSgrSqbhDwKZGuxUNbuAaGSo46QYWNUeE6XxZDCHu6lvF36qGj/faRA98V3IdsxUTR4rTSa/skCR+M/6PtlL50wNp4lEx5RUggaFNTL0qtTdid6lOqEdnDmCeGcalsgqHkEdcfGj5y5XJ+JXuh1O06HGGx2iJnCLe6pxuDYtDlj+IIhIYzqYMba1oJd+pnbn764sMmvhB1859+hL0PTvm5t38mq7J4T3tNa5bEcagYitSTsP4OBp6V/IixhF9VbAGAANncGcAmQINBE+tjmgBEAC7pKK78t89DW7mvMoSgiScLfPNF8/TSF380is0hFRL3dOmcXEfNsX26jtv8bdvvtkElB1fPwOntmqSAsrLOuURVQ6GSxH7IDU5QFfaTIsudtLR5YTlC3ZuOTOb1HWEK26fDRXuIWjhFDXJH3KLv+rSrq0+x7ZtH++CHq5XJWk7VUh/wWcGxZefs7+1HTivymhjXCOwQvqblzZ5MAec9i4QIXxkqX1HY7ryxGVdjj9lApOnoU5EcSYr08cm7xQEgrdDLAZFQxDYBLDuV6E6jKEfAfwZINSEe4Ocm82vtCF5K0HiwhFU09ky2yogbMuTTi2f8ibN8SbbhZDJlDPd2ZkkpsKNfIALmOiPhHGvXGmtg6FdzRUOSGirSm8tcakpS+d0/IElbD453sksxg6s3cTs7Q+PudaccyQ0BqatMnzmfxCVOotT65kVnmz2P+4Q0gRSQ/Zi9Inz+OrzWxtn6/Tdw+FMUwvBccxW1r88k6uVLz23jW/8jOuwnUp4JKmZta/U2UZKTyPyrvTYhp/zK332BEnxiRY4ZfQjA4Iwlw00l4pYBDLLc6TFJtLbDv859UCisXa8MtWYWrlM3YfGFs9k1WemML8u79g2DK8g3VPkD94Q5anqufEGm74K/keOmss8cQoBX9VPFMpS1mFCT+2UdGP0UvMlADct0aFnAwtb9QARAQABsAwAAGdwZwEAAAAAAAC0QVVidW50dSBDRCBJbWFnZSBBdXRvbWF0aWMgU2lnbmluZyBLZXkgKDIwMTIpIDxjZGltYWdlQHVidW50dS5jb20+sAwAAGdwZwIAAAAAAACJAjcEEwEKACEFAk+tjmgCGwMFCwkIBwMFFQoJCAsFFgIDAQACHgECF4AACgkQ2Uqj8O/iEJJIQBAAiY2WV7gGmzKwuPWedh8sFWYqSYKFebnzIti0GDJMhilUEPxO+JVI3HDJm0OI9NIoU2Afhf4tvQMX2ryZ5UqVoJsIzzuGGOY76KFIl0JlR19dKDNcN/mPcEnJnlGNyIU7cIhWgSa+k2e0bzk4P6W0NBr88TZZEqG7qhQmdNt5nJdmOzpGNT2YMYi2nw+kcdjv4HJUD7OGHx6PGykQOKNdO9NpxPGBPnYsSIAEMOu08YauYnTcbFqbnSqvSdXy4JxM+4vQCVDn9drIPV+2b6V2d0LzFeYjrywOA0S7/RyMcs+9F6nmpEvrs3yl7gjM4XVEyG/7TQAjQd+/q3iKnT7MlBd7cVclmi9YzJEbL+te8igImLzzcDA0b62yoieCHJ3eLT85qs+RwRVMlC57NycyTY6YCgryxoVavpVbHaTJaUMRBuf24cyYAdY6yG5HDkn50NctBr/QiLXpftatARzJ9HT1VmjXymBRrM+IoFvro//wtPf4LRjJu/D0H46hKEdo/02pv7ZrnMUit99cn5uWoNgkGBgt27MHyCPuBGp1/XTf0Rt/9nbEsmK7lqUyEBul2u/gGbWAQxFzWKL4HSbV1slLVtF+0eryI4dR2Hq93Ueoryfqv21hmOOcx3jQTVN94ZZ5cRBDYn90Wf4/8N0oxq7UkCuvZmjUeqJ6uPdnvuuwBgADZ3BnAJkCDQRbn8HaARAA7/xscrcfy3El2LjNDMCqI2wcnvNbNBtZxMfpc+lQFKSFGZ25KnVwRwvncKxkvwnni7gIz0S1PAKMRP4472VafMRRhFh2HZJalxmf4CXz+Xd3yFAbWR2RCZfAfJvaTB3/wEEHbAvmM4s0hubeTIZ6LcNOOC17XRBJMdreic9Dhq4fuSKMal+6WYqugr9fQaIWlIqCjHaexEukWHze6Jeh0ixZazF7VX4f4o6TfY92YVRlXkQvJCh0LCeT5CG5r8QYlIe0iZn2VMdCEITTGgx133WQBjbZ4c8zUXm9RajS0lZK0vz57AEMzIRtQQ5tlTkheuI3myl33xajOS10UE3qky7I1G266kerPxgjvFBe431I+iO7Wi8oJrBzvyQ+I6SkQtIG6VAX2oici77nqcd5FqKi97DdC4ZTCPNPnwOxk76DseLaalZc5ROk2o2Lvo31t0KThUuXsBDHS9uoc8bGYP4Hmb02wK3D/jrCSkZob+JDaOgMnch0P92Vf391/Zk9/0jy2yWrppIKd2M3ereT3gbvmUJP5jeVjTbmooTRFe5ZW9WYb2NBcbvQVXfwTZdK87sad6yIpwdk19kgoO8BOcV5MF7kP9nkwxNL9B5Rp7ZLmYxqMA2ZMR2UEsWVTs3WQkVWl/1hBS6SmtgEKcOUSa0OKGfzn4n18icz9u6NN8EAEQEAAbAMAABncGcBAAAAAAAAtEJVYnVudHUgQXJjaGl2ZSBBdXRvbWF0aWMgU2lnbmluZyBLZXkgKDIwMTgpIDxmdHBtYXN0ZXJAdWJ1bnR1LmNvbT6wDAAAZ3BnAgAAAAAAAIkCOAQTAQoAIgUCW5/B2gIbAwYLCQgHAwIGFQgCCQoLBBYCAwECHgECF4AACgkQhxkg0ZkbyTwscxAApLZyfHP/lZqgI5YCt/mDpQdt44KBzkMGbSEK4UNlZa/jbtoZ6LcI+4vDQMYsJdl3Jzl2oTya+MyU6aYAoqWPW4aDdNgJtBaNY94ycE9luQWCRmhcnv/oIHttZGG3WwfOm3UtNn5JgPA7AnrxBGnsNFpmX1jpCJRt66GrYNRxOh9VsHFuGtyQ3hm14u+b7+cb2b9yKilzrovBF2TGp8nfYLKr7VNLlVogkMbsNbOIb4pu7qoIMzhA2WDcsfunXgKtHEBtziW+iFGCxXh5Cqwhx0WS5Vjkc8+PYrxOqljpJN7waHRqmsbVFXxkprLcpIymfJXV8Aqfh8z1vKIvNACi8LQtn0wwyysBL/jkC8LcgQpJKGMsWfVfV1EKI7r/uOZkShm0CnneGR/xIwGyLvyFU2sG6ZnB8h0EDW/bb4tjjFAryrhcKhFwD0b6m/NT1hVbtxGcNlkaXS7A7DvP0+RAEXkoUqNYPPh8KT4rr5i0ami8Yp6QYFvwjsQDpSm8+CoD9B0jS3UgE/Q3TpFByzV9RoBAS3PoMbLnORGFHikZJmf50URPs90CMQrzjLsF1ji35TWNxIi8GPQXYHsvBEvvEalKkgqL96QBcuzXXtu8UdoK+ZRg3slWnUYyZUXGEh3HoIWbd/EbxCM1vm16t79ior646BxefLVSXC0JTOWtJo+wBgADZ3BnAA=="
+
+    fun ensureKeyrings(root: File, context: Context? = null) {
+        try {
+            val shareKeyrings = File(root, "usr/share/keyrings")
+            shareKeyrings.mkdirs()
+            val trustedD = File(root, "etc/apt/trusted.gpg.d")
+            trustedD.mkdirs()
+            val aptKeyrings = File(root, "etc/apt/keyrings")
+            aptKeyrings.mkdirs()
+
+            // 1. Copy any available keyrings from app assets
+            if (context != null) {
+                val assetKeyrings = listOf(
+                    "ubuntu-archive-keyring.gpg",
+                    "ubuntu-keyring-2018-archive.gpg",
+                    "ubuntu-master-keyring.gpg",
+                    "ubuntu-archive-removed-keys.gpg",
+                    "ubuntu-keyring-2012-cdimage.gpg",
+                    "ubuntu-cloudimage-keyring.gpg"
+                )
+                for (name in assetKeyrings) {
+                    try {
+                        val targets = if (name.contains("2018") || name.contains("2012")) {
+                            listOf(File(trustedD, name), File(shareKeyrings, name))
+                        } else {
+                            listOf(File(shareKeyrings, name), File(aptKeyrings, name))
+                        }
+                        context.assets.open(name).use { inStream ->
+                            val bytes = inStream.readBytes()
+                            if (bytes.isNotEmpty()) {
+                                for (target in targets) {
+                                    if (!target.exists() || target.length() != bytes.size.toLong()) {
+                                        target.parentFile?.mkdirs()
+                                        target.outputStream().use { it.write(bytes) }
+                                        target.setReadable(true, false)
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore if specific asset not present
+                    }
+                }
+            }
+
+            // 2. Offline fallback: guarantee ubuntu-archive-keyring.gpg is present with signing key 871920D1991BC93C
+            val archiveKeyring = File(shareKeyrings, "ubuntu-archive-keyring.gpg")
+            if (!archiveKeyring.exists() || archiveKeyring.length() < 1000L) {
+                try {
+                    val keyBytes = android.util.Base64.decode(UBUNTU_ARCHIVE_KEYRING_BASE64, android.util.Base64.DEFAULT)
+                    listOf(
+                        archiveKeyring,
+                        File(aptKeyrings, "ubuntu-archive-keyring.gpg"),
+                        File(trustedD, "ubuntu-keyring-2018-archive.gpg"),
+                        File(trustedD, "ubuntu-archive-keyring.gpg"),
+                        File(root, "etc/apt/trusted.gpg")
+                    ).forEach { target ->
+                        target.parentFile?.mkdirs()
+                        target.outputStream().use { it.write(keyBytes) }
+                        target.setReadable(true, false)
+                    }
+                    android.util.Log.i("BootstrapManager", "Restored Ubuntu archive keyring from embedded base64 (${keyBytes.size} bytes)")
+                } catch (e: Exception) {
+                    android.util.Log.e("BootstrapManager", "Failed to decode embedded keyring", e)
+                }
+            } else {
+                // Ensure trusted.gpg.d and etc/apt/keyrings mirrors exist
+                try {
+                    val archiveBytes = archiveKeyring.readBytes()
+                    listOf(
+                        File(aptKeyrings, "ubuntu-archive-keyring.gpg"),
+                        File(trustedD, "ubuntu-archive-keyring.gpg"),
+                        File(root, "etc/apt/trusted.gpg")
+                    ).forEach { target ->
+                        if (!target.exists() || target.length() != archiveBytes.size.toLong()) {
+                            target.parentFile?.mkdirs()
+                            target.outputStream().use { it.write(archiveBytes) }
+                            target.setReadable(true, false)
+                        }
+                    }
+                } catch (e: Exception) {}
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure keyrings", e)
+        }
+    }
+
 
     private fun ensurePasswd(root: File, home: File) {
         try {

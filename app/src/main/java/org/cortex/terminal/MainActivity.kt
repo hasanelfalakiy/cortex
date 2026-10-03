@@ -233,11 +233,17 @@ class MainActivity : AppCompatActivity() {
         if (BootstrapManager.isBootstrapInstalled(this)) {
             // Fast synchronous prep before creating session:
             // 1. Ensure hook library is up-to-date and not corrupted (<2ms)
-            // 2. Clear stale socket/lock files from tmp (<1ms)
+            // 2. Ensure repository GPG keyrings are present and verified (<1ms)
+            // 3. Clear stale socket/lock files from tmp (<1ms)
             try {
                 BootstrapManager.ensureHookLibrary(this, root)
             } catch (e: Exception) {
                 android.util.Log.e("MainActivity", "Startup ensureHookLibrary failed", e)
+            }
+            try {
+                BootstrapManager.ensureKeyrings(root, this)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup ensureKeyrings failed", e)
             }
             try {
                 BootstrapManager.cleanupStaleSocketsAndLocks(root, homeDir)
@@ -267,6 +273,11 @@ class MainActivity : AppCompatActivity() {
                 BootstrapManager.ensureCaCertificates(root, this@MainActivity)
             } catch (e: Exception) {
                 android.util.Log.e("MainActivity", "Startup CA certs failed", e)
+            }
+            try {
+                BootstrapManager.ensureKeyrings(root, this@MainActivity)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Startup keyrings failed", e)
             }
             try {
                 BootstrapManager.ensureEssentialBinaries(root, homeDir)

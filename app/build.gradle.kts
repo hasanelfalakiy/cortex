@@ -13,8 +13,8 @@ android {
         applicationId = "org.cortex.terminal"
         minSdk = 24
         targetSdk = 28
-        versionCode = 12467
-        versionName = "1.24.67"
+        versionCode = 12468
+        versionName = "1.24.68"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -41,7 +41,7 @@ android {
     }
 
     androidResources {
-        noCompress += listOf("gz", "tgz")
+        noCompress += listOf("gz", "tgz", "gpg")
     }
 
     signingConfigs {
