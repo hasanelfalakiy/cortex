@@ -2258,17 +2258,8 @@ long syscall(long number, ...) {
 #if defined(__NR_getegid32)
     if (number == __NR_getegid32) return 0;
 #endif
-#if defined(__NR_getresuid) || defined(__NR_getresuid32)
-    #if defined(__NR_getresuid)
-    if (number == __NR_getresuid)
-    #endif
-    #if defined(__NR_getresuid32)
-    #if defined(__NR_getresuid)
-    ||
-    #endif
-    number == __NR_getresuid32
-    #endif
-    {
+#if defined(__NR_getresuid)
+    if (number == __NR_getresuid) {
         uid_t *ruid = (uid_t *)arg1;
         uid_t *euid = (uid_t *)arg2;
         uid_t *suid = (uid_t *)arg3;
@@ -2278,17 +2269,30 @@ long syscall(long number, ...) {
         return 0;
     }
 #endif
-#if defined(__NR_getresgid) || defined(__NR_getresgid32)
-    #if defined(__NR_getresgid)
-    if (number == __NR_getresgid)
-    #endif
-    #if defined(__NR_getresgid32)
-    #if defined(__NR_getresgid)
-    ||
-    #endif
-    number == __NR_getresgid32
-    #endif
-    {
+#if defined(__NR_getresuid32)
+    if (number == __NR_getresuid32) {
+        uid_t *ruid = (uid_t *)arg1;
+        uid_t *euid = (uid_t *)arg2;
+        uid_t *suid = (uid_t *)arg3;
+        if (ruid) *ruid = 0;
+        if (euid) *euid = 0;
+        if (suid) *suid = 0;
+        return 0;
+    }
+#endif
+#if defined(__NR_getresgid)
+    if (number == __NR_getresgid) {
+        gid_t *rgid = (gid_t *)arg1;
+        gid_t *egid = (gid_t *)arg2;
+        gid_t *sgid = (gid_t *)arg3;
+        if (rgid) *rgid = 0;
+        if (egid) *egid = 0;
+        if (sgid) *sgid = 0;
+        return 0;
+    }
+#endif
+#if defined(__NR_getresgid32)
+    if (number == __NR_getresgid32) {
         gid_t *rgid = (gid_t *)arg1;
         gid_t *egid = (gid_t *)arg2;
         gid_t *sgid = (gid_t *)arg3;
