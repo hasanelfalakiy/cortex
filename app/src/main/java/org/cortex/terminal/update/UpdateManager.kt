@@ -189,6 +189,26 @@ object UpdateManager {
         return assets.firstOrNull()
     }
 
+    fun openUnknownAppSourcesSettings(activity: Activity) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:${activity.packageName}")
+                )
+                activity.startActivity(intent)
+            }
+        } catch (e: Exception) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES))
+                }
+            } catch (ex: Exception) {
+                Toast.makeText(activity, "Failed to open settings: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     fun showUpdateDialog(activity: Activity, info: ReleaseInfo) {
         if (activity.isFinishing || activity.isDestroyed) return
 
@@ -210,7 +230,16 @@ object UpdateManager {
             .setTitle("Update Available")
             .setMessage(messageBuilder.toString())
             .setPositiveButton("Update") { _, _ ->
-                downloadAndInstall(activity, info)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !activity.packageManager.canRequestPackageInstalls()) {
+                    Toast.makeText(
+                        activity,
+                        "Lütfen Cortex için bilinmeyen uygulamaları yüklemeye izin verin",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    openUnknownAppSourcesSettings(activity)
+                } else {
+                    downloadAndInstall(activity, info)
+                }
             }
             .setNegativeButton("Later", null)
             .show()
@@ -256,6 +285,16 @@ object UpdateManager {
 
     fun downloadAndInstall(activity: Activity, info: ReleaseInfo) {
         if (activity.isFinishing || activity.isDestroyed) return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !activity.packageManager.canRequestPackageInstalls()) {
+            Toast.makeText(
+                activity,
+                "Lütfen Cortex için bilinmeyen uygulamaları yüklemeye izin verin",
+                Toast.LENGTH_LONG
+            ).show()
+            openUnknownAppSourcesSettings(activity)
+            return
+        }
 
         cleanUpdates(activity)
 
@@ -429,15 +468,7 @@ object UpdateManager {
                     .setTitle("Install Permission Required")
                     .setMessage("Cortex needs permission to install downloaded APK updates. Please enable 'Allow from this source' for Cortex in system settings.")
                     .setPositiveButton("Settings") { _, _ ->
-                        try {
-                            val intent = Intent(
-                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                Uri.parse("package:${activity.packageName}")
-                            )
-                            activity.startActivity(intent)
-                        } catch (e: Exception) {
-                            Toast.makeText(activity, "Failed to open settings: ${e.message}", Toast.LENGTH_SHORT).show()
-                        }
+                        openUnknownAppSourcesSettings(activity)
                     }
                     .setNegativeButton("Cancel") { _, _ ->
                         cleanUpdates(activity)

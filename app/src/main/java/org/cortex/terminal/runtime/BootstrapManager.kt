@@ -326,7 +326,7 @@ object BootstrapManager {
         ensureEssentialBinaries(root, home)
     }
 
-    const val CURRENT_BOOTSTRAP_VERSION = 12470
+    const val CURRENT_BOOTSTRAP_VERSION = 12472
 
     fun isBootstrapInstalled(context: Context): Boolean {
         val root = Environment.getCortexRoot(context)
@@ -341,9 +341,12 @@ object BootstrapManager {
                 // Never re-extract base bootstrap archive over user-installed packages
                 try {
                     ensureHookLibrary(context, root)
+                    restoreGpgv(root)
                     ensureKeyrings(root, context)
                     ensureAptSandbox(root)
                     ensureUbuntuSources(root)
+                    ensureMachineId(root)
+                    ensureEssentialBinaries(root, Environment.getHomeDir(context))
                     versionFile.writeText(CURRENT_BOOTSTRAP_VERSION.toString())
                 } catch (e: Exception) {
                     android.util.Log.e("BootstrapManager", "Failed to perform non-destructive bootstrap update", e)
@@ -878,7 +881,6 @@ object BootstrapManager {
                 "Acquire::AllowInsecureRepositories \"true\";\n" +
                 "Acquire::AllowDowngradeToInsecureRepositories \"true\";\n" +
                 "APT::Get::AllowUnauthenticated \"true\";\n" +
-                "APT::Key::GPGVExecutable \"/usr/bin/gpgv\";\n" +
                 "Dir::Etc::trusted \"/usr/share/keyrings/ubuntu-archive-keyring.gpg\";\n" +
                 "Dir::Etc::trustedparts \"/etc/apt/trusted.gpg.d\";\n" +
                 "Dir::dpkg::cputable \"/usr/share/dpkg/cputable\";\n" +
@@ -1728,7 +1730,8 @@ object BootstrapManager {
             ensureServiceManager(root)
             ensureBrowserOpener(root)
             ensureRootTools(root)
-            ensureGpgvWrapper(root)
+            restoreGpgv(root)
+            ensureMachineId(root)
             ensureMuseLauncher(root, home)
             ensureProfileEnvironment(root)
         } catch (e: Exception) {
@@ -1736,53 +1739,45 @@ object BootstrapManager {
         }
     }
 
-    fun ensureGpgvWrapper(root: File) {
+    fun restoreGpgv(root: File) {
         try {
             val gpgv = File(root, "usr/bin/gpgv")
             val gpgvOrig = File(root, "usr/bin/gpgv.orig")
-            if (gpgv.exists() && !gpgvOrig.exists()) {
-                val bytes = ByteArray(4)
-                try {
-                    java.io.FileInputStream(gpgv).use { it.read(bytes) }
-                    if (bytes[0] == 0x7f.toByte() && bytes[1] == 'E'.code.toByte() && bytes[2] == 'L'.code.toByte() && bytes[3] == 'F'.code.toByte()) {
-                        gpgv.copyTo(gpgvOrig, overwrite = true)
-                        gpgvOrig.setExecutable(true, false)
-                    }
-                } catch (e: Exception) {}
+            if (gpgvOrig.exists()) {
+                gpgvOrig.copyTo(gpgv, overwrite = true)
+                gpgv.setExecutable(true, false)
+                gpgv.setReadable(true, false)
+                try { android.system.Os.chmod(gpgv.absolutePath, 493) } catch (e: Exception) {}
+                gpgvOrig.delete()
+                android.util.Log.i("BootstrapManager", "Restored native gpgv binary from gpgv.orig")
             }
-            val wrapperScript = "#!/bin/sh\n" +
-                "ROOT=\"\${CORTEX_ROOT:-" + root.absolutePath + "}\"\n" +
-                "unset LC_ALL LANG\n" +
-                "export LD_PRELOAD=\"\$ROOT/usr/lib/libcortex-hook.so\"\n" +
-                "export LD_LIBRARY_PATH=\"\$ROOT/lib:\$ROOT/usr/lib:\$ROOT/lib/aarch64-linux-gnu:\$ROOT/usr/lib/aarch64-linux-gnu:\$ROOT/lib/arm-linux-gnueabihf:\$ROOT/usr/lib/arm-linux-gnueabihf:\$ROOT/usr/local/lib\"\n" +
-                "n=\$#\n" +
-                "while [ \$n -gt 0 ]; do\n" +
-                "    arg=\"\$1\"\n" +
-                "    shift\n" +
-                "    case \"\$arg\" in\n" +
-                "        /usr/*|/etc/*)\n" +
-                "            if [ -e \"\$ROOT\$arg\" ]; then\n" +
-                "                set -- \"\$@\" \"\$ROOT\$arg\"\n" +
-                "            else\n" +
-                "                set -- \"\$@\" \"\$arg\"\n" +
-                "            fi\n" +
-                "            ;;\n" +
-                "        *)\n" +
-                "            set -- \"\$@\" \"\$arg\"\n" +
-                "            ;;\n" +
-                "    esac\n" +
-                "    n=\$((n - 1))\n" +
-                "done\n" +
-                "if [ -x \"\$ROOT/usr/bin/gpgv.orig\" ]; then\n" +
-                "    exec \"\$ROOT/usr/bin/gpgv.orig\" \"\$@\"\n" +
-                "fi\n" +
-                "exec gpgv \"\$@\"\n"
-            gpgv.writeText(wrapperScript)
-            gpgv.setExecutable(true, false)
-            gpgv.setReadable(true, false)
-            try { android.system.Os.chmod(gpgv.absolutePath, 493) } catch (e: Exception) {}
         } catch (e: Exception) {
-            android.util.Log.e("BootstrapManager", "Failed to ensure gpgv wrapper", e)
+            android.util.Log.e("BootstrapManager", "Failed to restore gpgv", e)
+        }
+    }
+
+    fun ensureMachineId(root: File) {
+        try {
+            val machineId = File(root, "etc/machine-id")
+            if (!machineId.exists() || machineId.length() < 32) {
+                machineId.parentFile?.mkdirs()
+                val uuid = java.util.UUID.randomUUID().toString().replace("-", "")
+                machineId.writeText("$uuid\n")
+                machineId.setReadable(true, false)
+                try { android.system.Os.chmod(machineId.absolutePath, 420) } catch (e: Exception) {}
+            }
+            val dbusDir = File(root, "var/lib/dbus")
+            dbusDir.mkdirs()
+            val dbusMachineId = File(dbusDir, "machine-id")
+            if (!dbusMachineId.exists()) {
+                try {
+                    android.system.Os.symlink("/etc/machine-id", dbusMachineId.absolutePath)
+                } catch (e: Exception) {
+                    machineId.copyTo(dbusMachineId, overwrite = true)
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure machine-id", e)
         }
     }
 
@@ -1825,7 +1820,7 @@ object BootstrapManager {
                 "        export CORTEX_ROOT=\"" + root.absolutePath + "\"\n" +
                 "    fi\n" +
                 "fi\n" +
-                "export LD_LIBRARY_PATH=\"\$CORTEX_ROOT/lib:\$CORTEX_ROOT/usr/lib:\$CORTEX_ROOT/lib/aarch64-linux-gnu:\$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:\$CORTEX_ROOT/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/local/lib\"\n" +
+                "export LD_LIBRARY_PATH=\"\$CORTEX_ROOT/lib:\$CORTEX_ROOT/usr/lib:\$CORTEX_ROOT/lib/aarch64-linux-gnu:\$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:\$CORTEX_ROOT/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/local/lib:\$CORTEX_ROOT/usr/lib/systemd:\$CORTEX_ROOT/lib/systemd\"\n" +
                 "export LD_PRELOAD=\"\$CORTEX_ROOT/usr/lib/libcortex-hook.so\"\n"
             envSh.writeText(envContent)
             envSh.setReadable(true, false)
@@ -2322,7 +2317,7 @@ done
 [ -z "${'$'}CORTEX_SHELL" ] && CORTEX_SHELL="/system/bin/sh"
 
 CORTEX_PATH="${'$'}CORTEX_ROOT/usr/local/sbin:${'$'}CORTEX_ROOT/usr/sbin:${'$'}CORTEX_ROOT/sbin:${'$'}CORTEX_ROOT/usr/local/bin:${'$'}CORTEX_ROOT/bin:${'$'}CORTEX_ROOT/usr/bin:/system/bin:/system/xbin"
-CORTEX_LD="${'$'}CORTEX_ROOT/lib:${'$'}CORTEX_ROOT/usr/lib:${'$'}CORTEX_ROOT/lib/aarch64-linux-gnu:${'$'}CORTEX_ROOT/usr/lib/aarch64-linux-gnu:${'$'}CORTEX_ROOT/lib/arm-linux-gnueabihf:${'$'}CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:${'$'}CORTEX_ROOT/usr/local/lib"
+CORTEX_LD="${'$'}CORTEX_ROOT/lib:${'$'}CORTEX_ROOT/usr/lib:${'$'}CORTEX_ROOT/lib/aarch64-linux-gnu:${'$'}CORTEX_ROOT/usr/lib/aarch64-linux-gnu:${'$'}CORTEX_ROOT/lib/arm-linux-gnueabihf:${'$'}CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:${'$'}CORTEX_ROOT/usr/local/lib:${'$'}CORTEX_ROOT/usr/lib/systemd:${'$'}CORTEX_ROOT/lib/systemd"
 CORTEX_PRELOAD=""
 if [ -f "${'$'}CORTEX_ROOT/usr/lib/libcortex-hook.so" ]; then
     CORTEX_PRELOAD="${'$'}CORTEX_ROOT/usr/lib/libcortex-hook.so"

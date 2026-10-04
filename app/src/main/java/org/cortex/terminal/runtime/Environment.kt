@@ -50,7 +50,9 @@ object Environment {
             "$root/usr/lib/aarch64-linux-gnu",
             "$root/lib/arm-linux-gnueabihf",
             "$root/usr/lib/arm-linux-gnueabihf",
-            "$root/usr/local/lib"
+            "$root/usr/local/lib",
+            "$root/usr/lib/systemd",
+            "$root/lib/systemd"
         )
         val ldPathStr = ldLibraryPathList.joinToString(":")
 

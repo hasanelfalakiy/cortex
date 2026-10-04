@@ -2251,8 +2251,8 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
     if (!has_ld_library_path && g_cortex_root[0] != '\0') {
         char *str = malloc(PATH_MAX * 4);
         if (str) {
-            snprintf(str, PATH_MAX * 4, "LD_LIBRARY_PATH=%s/lib:%s/usr/lib:%s/lib/aarch64-linux-gnu:%s/usr/lib/aarch64-linux-gnu:%s/lib/arm-linux-gnueabihf:%s/usr/lib/arm-linux-gnueabihf:%s/usr/local/lib",
-                     g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root);
+            snprintf(str, PATH_MAX * 4, "LD_LIBRARY_PATH=%s/lib:%s/usr/lib:%s/lib/aarch64-linux-gnu:%s/usr/lib/aarch64-linux-gnu:%s/lib/arm-linux-gnueabihf:%s/usr/lib/arm-linux-gnueabihf:%s/usr/local/lib:%s/usr/lib/systemd:%s/lib/systemd",
+                     g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root);
             new_env[dst++] = str;
         }
     }
@@ -2315,6 +2315,7 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
     // Intercept utilities that fail or cause issues in unprivileged Android environment
     if (strcmp(prog_name, "ldconfig") == 0 ||
         strcmp(prog_name, "ldconfig.real") == 0 ||
+        strcmp(prog_name, "systemd-machine-id-setup") == 0 ||
         strcmp(prog_name, "start-stop-daemon") == 0) {
         _exit(0);
     }
@@ -2638,6 +2639,7 @@ int posix_spawn(pid_t *pid, const char *path,
 
     if (strcmp(prog_name, "ldconfig") == 0 ||
         strcmp(prog_name, "ldconfig.real") == 0 ||
+        strcmp(prog_name, "systemd-machine-id-setup") == 0 ||
         strcmp(prog_name, "start-stop-daemon") == 0) {
         pid_t child = fork();
         if (child == 0) {

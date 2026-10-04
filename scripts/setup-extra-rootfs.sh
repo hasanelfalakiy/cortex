@@ -390,7 +390,7 @@ done
 [ -z "$CORTEX_SHELL" ] && CORTEX_SHELL="/system/bin/sh"
 
 CORTEX_PATH="$CORTEX_ROOT/usr/local/sbin:$CORTEX_ROOT/usr/sbin:$CORTEX_ROOT/sbin:$CORTEX_ROOT/usr/local/bin:$CORTEX_ROOT/bin:$CORTEX_ROOT/usr/bin:/system/bin:/system/xbin"
-CORTEX_LD="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib"
+CORTEX_LD="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib:$CORTEX_ROOT/usr/lib/systemd:$CORTEX_ROOT/lib/systemd"
 CORTEX_PRELOAD=""
 if [ -f "$CORTEX_ROOT/usr/lib/libcortex-hook.so" ]; then
   CORTEX_PRELOAD="$CORTEX_ROOT/usr/lib/libcortex-hook.so"
@@ -512,11 +512,25 @@ if [ -z "$CORTEX_ROOT" ]; then
     fi
 fi
 if [ -n "$CORTEX_ROOT" ]; then
-    export LD_LIBRARY_PATH="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib"
+    export LD_LIBRARY_PATH="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib:$CORTEX_ROOT/usr/lib/systemd:$CORTEX_ROOT/lib/systemd"
     export LD_PRELOAD="$CORTEX_ROOT/usr/lib/libcortex-hook.so"
 fi
 EOFENV
 chmod 0644 extra-rootfs/etc/profile.d/00-env.sh
+
+mkdir -p extra-rootfs/etc extra-rootfs/var/lib/dbus
+if [ ! -f extra-rootfs/etc/machine-id ]; then
+    head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' > extra-rootfs/etc/machine-id
+    printf '\n' >> extra-rootfs/etc/machine-id
+    chmod 0644 extra-rootfs/etc/machine-id
+fi
+cp extra-rootfs/etc/machine-id extra-rootfs/var/lib/dbus/machine-id 2>/dev/null || true
+
+for p in extra-rootfs/usr/sbin extra-rootfs/bin extra-rootfs/usr/bin; do
+    mkdir -p "$p"
+    printf '#!/bin/sh\nexit 0\n' > "$p/systemd-machine-id-setup"
+    chmod 0755 "$p/systemd-machine-id-setup"
+done
 
 chmod 0755 extra-rootfs/usr/local/bin/*
 echo "extra-rootfs service, browser, root tools, and muse prepared successfully."

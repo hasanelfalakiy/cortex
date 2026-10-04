@@ -79,6 +79,15 @@ class MainActivity : AppCompatActivity() {
         updateRedDot = findViewById(R.id.updateRedDot)
 
         layoutUpdateBadge.setOnClickListener {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+                Toast.makeText(
+                    this,
+                    "Güncelleme yüklemek için bilinmeyen uygulamaları yükleme iznini açın",
+                    Toast.LENGTH_LONG
+                ).show()
+                UpdateManager.openUnknownAppSourcesSettings(this)
+                return@setOnClickListener
+            }
             val cached = UpdateManager.cachedReleaseInfo
             if (UpdateManager.isUpdateAvailable && cached != null) {
                 UpdateManager.showUpdateDialog(this, cached)
