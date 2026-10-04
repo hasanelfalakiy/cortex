@@ -607,38 +607,6 @@ int __openat_2(int dirfd, const char *pathname, int flags) {
     return openat(dirfd, pathname, flags);
 }
 
-int __open64_2(const char *pathname, int flags) {
-    return open(pathname, flags);
-}
-
-int __openat64_2(int dirfd, const char *pathname, int flags) {
-    return openat(dirfd, pathname, flags);
-}
-
-#if !defined(__LP64__)
-int open64(const char *pathname, int flags, ...) {
-    if (open_needs_mode(flags)) {
-        va_list args;
-        va_start(args, flags);
-        mode_t mode = va_arg(args, mode_t);
-        va_end(args);
-        return open(pathname, flags, mode);
-    }
-    return open(pathname, flags);
-}
-
-int openat64(int dirfd, const char *pathname, int flags, ...) {
-    if (open_needs_mode(flags)) {
-        va_list args;
-        va_start(args, flags);
-        mode_t mode = va_arg(args, mode_t);
-        va_end(args);
-        return openat(dirfd, pathname, flags, mode);
-    }
-    return openat(dirfd, pathname, flags);
-}
-#endif
-
 
 // Hook fopen
 FILE *fopen(const char *pathname, const char *mode) {
@@ -1502,9 +1470,11 @@ int scandir(const char *dirp, struct dirent ***namelist,
 // Export 64-bit Large File Support (LFS) symbol aliases on 64-bit platforms so that
 // calls from libraries compiled with LFS (such as libstdc++ calling fopen64) are intercepted.
 __asm__(
-    ".globl open64\n"      ".set open64, open\n"
-    ".globl openat64\n"    ".set openat64, openat\n"
-    ".globl creat64\n"     ".set creat64, creat\n"
+    ".globl open64\n"        ".set open64, open\n"
+    ".globl openat64\n"      ".set openat64, openat\n"
+    ".globl __open64_2\n"    ".set __open64_2, __open_2\n"
+    ".globl __openat64_2\n"  ".set __openat64_2, __openat_2\n"
+    ".globl creat64\n"       ".set creat64, creat\n"
     ".globl fopen64\n"     ".set fopen64, fopen\n"
     ".globl freopen64\n"   ".set freopen64, freopen\n"
     ".globl stat64\n"      ".set stat64, stat\n"
