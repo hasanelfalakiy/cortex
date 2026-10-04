@@ -146,12 +146,10 @@ jobs:
           printf '#!/bin/sh\nexit 101\n' > extra-rootfs/usr/sbin/policy-rc.d
           printf '#!/bin/sh\nexit 0\n' > extra-rootfs/usr/sbin/ldconfig
           printf '#!/bin/sh\nexit 0\n' > extra-rootfs/usr/sbin/start-stop-daemon
-          mkdir -p extra-rootfs/usr/sbin extra-rootfs/usr/bin extra-rootfs/bin extra-rootfs/sbin
+          mkdir -p extra-rootfs/usr/sbin extra-rootfs/usr/bin
           printf '#!/bin/sh\nexit 0\n' > extra-rootfs/usr/sbin/systemd-machine-id-setup
           printf '#!/bin/sh\nexit 0\n' > extra-rootfs/usr/bin/systemd-machine-id-setup
-          printf '#!/bin/sh\nexit 0\n' > extra-rootfs/bin/systemd-machine-id-setup
-          printf '#!/bin/sh\nexit 0\n' > extra-rootfs/sbin/systemd-machine-id-setup
-          chmod 0755 extra-rootfs/usr/sbin/systemd-machine-id-setup extra-rootfs/usr/bin/systemd-machine-id-setup extra-rootfs/bin/systemd-machine-id-setup extra-rootfs/sbin/systemd-machine-id-setup
+          chmod 0755 extra-rootfs/usr/sbin/systemd-machine-id-setup extra-rootfs/usr/bin/systemd-machine-id-setup
           mkdir -p extra-rootfs/boot extra-rootfs/media extra-rootfs/mnt extra-rootfs/srv extra-rootfs/opt extra-rootfs/run extra-rootfs/tmp
           chmod 0755 extra-rootfs/boot extra-rootfs/media extra-rootfs/mnt extra-rootfs/srv extra-rootfs/opt extra-rootfs/usr/sbin/*
           printf 'root:x:0:\ndaemon:x:1:\ncortex:x:0:\n' > extra-rootfs/etc/group
