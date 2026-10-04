@@ -1610,7 +1610,10 @@ object BootstrapManager {
                 File(aptKeyrings, "ubuntu-keyring-2018-archive.gpg"),
                 File(trustedD, "ubuntu-archive-keyring.gpg"),
                 File(trustedD, "ubuntu-keyring-2018-archive.gpg"),
-                File(root, "etc/apt/trusted.gpg")
+                File(root, "etc/apt/trusted.gpg"),
+                File(root, "etc/gnupg/trustedkeys.gpg"),
+                File(root, "home/.gnupg/trustedkeys.gpg"),
+                File(root, "root/.gnupg/trustedkeys.gpg")
             )
 
             for (target in targetKeyrings) {
@@ -1845,6 +1848,11 @@ object BootstrapManager {
             ensureRootTools(root)
             restoreGpgv(root)
             ensureMachineId(root)
+            ensureShm(root)
+            ensureSystemdSharedLibs(root)
+            ensureOpenCodeDirs(home, root)
+            ensureMountpoint(root)
+            ensureJavaCaDirs(root)
             ensureMuseLauncher(root, home)
             ensureOpenCodeLauncher(root, home)
             ensureProfileEnvironment(root)
@@ -1891,22 +1899,26 @@ object BootstrapManager {
                 }
             }
 
-            // Ensure dummy exit 0 scripts for systemd-machine-id-setup across bin directories
+            // Ensure dummy exit 0 scripts for systemd tools across bin directories
             val scriptContent = "#!/bin/sh\nexit 0\n"
-            val targetBins = listOf(
-                File(root, "usr/bin/systemd-machine-id-setup"),
-                File(root, "usr/sbin/systemd-machine-id-setup"),
-                File(root, "bin/systemd-machine-id-setup"),
-                File(root, "sbin/systemd-machine-id-setup")
+            val dummyTools = listOf("systemd-machine-id-setup", "systemd-sysusers", "systemd-tmpfiles")
+            val binDirs = listOf(
+                File(root, "usr/bin"),
+                File(root, "usr/sbin"),
+                File(root, "bin"),
+                File(root, "sbin")
             )
-            for (tb in targetBins) {
-                try {
-                    tb.parentFile?.mkdirs()
-                    tb.writeText(scriptContent)
-                    tb.setReadable(true, false)
-                    tb.setExecutable(true, false)
-                    try { android.system.Os.chmod(tb.absolutePath, 493) } catch (_: Exception) {}
-                } catch (_: Exception) {}
+            for (tool in dummyTools) {
+                for (bDir in binDirs) {
+                    try {
+                        val tb = File(bDir, tool)
+                        tb.parentFile?.mkdirs()
+                        tb.writeText(scriptContent)
+                        tb.setReadable(true, false)
+                        tb.setExecutable(true, false)
+                        try { android.system.Os.chmod(tb.absolutePath, 493) } catch (_: Exception) {}
+                    } catch (_: Exception) {}
+                }
             }
 
             // Ensure dpkg diversions prevent systemd package updates from overwriting dummy scripts
@@ -1916,7 +1928,13 @@ object BootstrapManager {
             val divEntries = listOf(
                 "/usr/bin/systemd-machine-id-setup",
                 "/bin/systemd-machine-id-setup",
-                "/usr/sbin/systemd-machine-id-setup"
+                "/usr/sbin/systemd-machine-id-setup",
+                "/usr/bin/systemd-sysusers",
+                "/bin/systemd-sysusers",
+                "/usr/sbin/systemd-sysusers",
+                "/usr/bin/systemd-tmpfiles",
+                "/bin/systemd-tmpfiles",
+                "/usr/sbin/systemd-tmpfiles"
             )
             val currentDivText = if (diversionsFile.exists()) diversionsFile.readText() else ""
             val newDivBuilder = StringBuilder(currentDivText)
@@ -1944,6 +1962,10 @@ object BootstrapManager {
             usrLocalBin.mkdirs()
             val opencode = File(usrLocalBin, "opencode")
             val opencodeScript = "#!/bin/bash\n" +
+                "mkdir -p \"\$HOME/.config/opencode\" \"\$HOME/.local/share/opencode\" \"\$HOME/.cache/opencode\" 2>/dev/null || true\n" +
+                "if [ ! -f \"\$HOME/.config/opencode/opencode.json\" ]; then\n" +
+                "    echo \"{}\" > \"\$HOME/.config/opencode/opencode.json\" 2>/dev/null || true\n" +
+                "fi\n" +
                 "for cand in \"\$HOME/.opencode/bin/opencode\" \"/home/.opencode/bin/opencode\" \"\$HOME/.local/bin/opencode\" \"/home/.local/bin/opencode\"; do\n" +
                 "    if [ -x \"\$cand\" ]; then\n" +
                 "        exec \"\$cand\" \"\$@\"\n" +
@@ -2022,17 +2044,6 @@ object BootstrapManager {
                 "echo \" Installing Meta Muse Code CLI...\"\n" +
                 "echo \"==========================================================\"\n" +
                 "mkdir -p \"\$HOME/.local/bin\"\n" +
-                "curl -fsSL https://dev.meta.ai/install.sh 2>/dev/null | bash 2>/dev/null || true\n" +
-                "for cand in \"\$HOME/.local/bin/muse\" \"/home/.local/bin/muse\"; do\n" +
-                "    if [ -x \"\$cand\" ]; then\n" +
-                "        exec \"\$cand\" \"\$@\"\n" +
-                "    fi\n" +
-                "done\n" +
-                "for cand in \"\$HOME/.local/bin/muse-bin-\"* \"/home/.local/bin/muse-bin-\"*; do\n" +
-                "    if [ -x \"\$cand\" ]; then\n" +
-                "        exec \"\$cand\" \"\$@\"\n" +
-                "    fi\n" +
-                "done\n" +
                 "echo \"Installing official Meta Muse Code binary via direct CDN mirror...\"\n" +
                 "MUSE_VER=\"1.4.2-R4684.1\"\n" +
                 "MUSE_URL=\"https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=\$MUSE_VER&file=muse-aarch64-linux\"\n" +
@@ -2044,6 +2055,13 @@ object BootstrapManager {
                 "    echo \"Meta Muse Code CLI v\$MUSE_VER installed successfully!\"\n" +
                 "    exec \"\$MUSE_BIN\" \"\$@\"\n" +
                 "fi\n" +
+                "echo \"Direct CDN mirror failed, trying official installer script...\"\n" +
+                "curl -fsSL https://dev.meta.ai/install.sh 2>/dev/null | bash 2>/dev/null || true\n" +
+                "for cand in \"\$HOME/.local/bin/muse\" \"/home/.local/bin/muse\"; do\n" +
+                "    if [ -x \"\$cand\" ]; then\n" +
+                "        exec \"\$cand\" \"\$@\"\n" +
+                "    fi\n" +
+                "done\n" +
                 "echo \"Failed to install Muse Code CLI. Please check internet connection.\"\n" +
                 "exit 127\n"
             muse.writeText(museScript)
@@ -2052,6 +2070,149 @@ object BootstrapManager {
             try { android.system.Os.chmod(muse.absolutePath, 493) } catch (e: Exception) {}
         } catch (e: Exception) {
             android.util.Log.e("BootstrapManager", "Failed to ensure muse launcher", e)
+        }
+    }
+
+    fun ensureShm(root: File) {
+        try {
+            val tmpShm = File(root, "tmp/shm")
+            tmpShm.mkdirs()
+            try { android.system.Os.chmod(tmpShm.absolutePath, 1023) } catch (_: Exception) {}
+
+            val devDir = File(root, "dev")
+            devDir.mkdirs()
+            val devShm = File(devDir, "shm")
+            if (!devShm.exists()) {
+                try {
+                    android.system.Os.symlink("/tmp/shm", devShm.absolutePath)
+                } catch (_: Exception) {
+                    devShm.mkdirs()
+                    try { android.system.Os.chmod(devShm.absolutePath, 1023) } catch (_: Exception) {}
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure shm", e)
+        }
+    }
+
+    fun ensureSystemdSharedLibs(root: File) {
+        try {
+            val systemdLibDirs = listOf(
+                File(root, "usr/lib/aarch64-linux-gnu/systemd"),
+                File(root, "lib/aarch64-linux-gnu/systemd")
+            )
+            val usrLib = File(root, "usr/lib")
+            val libDir = File(root, "lib")
+            usrLib.mkdirs()
+            libDir.mkdirs()
+
+            for (sDir in systemdLibDirs) {
+                if (sDir.exists() && sDir.isDirectory) {
+                    sDir.listFiles()?.forEach { libFile ->
+                        if (libFile.name.startsWith("libsystemd-shared")) {
+                            val destUsr = File(usrLib, libFile.name)
+                            if (!destUsr.exists()) {
+                                try {
+                                    android.system.Os.symlink(libFile.absolutePath, destUsr.absolutePath)
+                                } catch (_: Exception) {
+                                    try { libFile.copyTo(destUsr, overwrite = false) } catch (_: Exception) {}
+                                }
+                            }
+                            val destLib = File(libDir, libFile.name)
+                            if (!destLib.exists()) {
+                                try {
+                                    android.system.Os.symlink(libFile.absolutePath, destLib.absolutePath)
+                                } catch (_: Exception) {
+                                    try { libFile.copyTo(destLib, overwrite = false) } catch (_: Exception) {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            val usrLibSystemd = File(usrLib, "systemd")
+            val archSystemd = File(root, "usr/lib/aarch64-linux-gnu/systemd")
+            if (!usrLibSystemd.exists() && archSystemd.exists()) {
+                try {
+                    android.system.Os.symlink(archSystemd.absolutePath, usrLibSystemd.absolutePath)
+                } catch (_: Exception) {}
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure systemd shared libs", e)
+        }
+    }
+
+    fun ensureOpenCodeDirs(home: File, root: File) {
+        try {
+            val homes = mutableListOf(home)
+            val rootUserHome = File(root, "root")
+            if (rootUserHome.exists()) homes.add(rootUserHome)
+            val homeCortex = File(root, "home/cortex")
+            if (homeCortex.exists() && homeCortex.absolutePath != home.absolutePath) homes.add(homeCortex)
+
+            for (h in homes) {
+                val cfgDir = File(h, ".config/opencode")
+                cfgDir.mkdirs()
+                val cfgFile = File(cfgDir, "opencode.json")
+                if (!cfgFile.exists()) {
+                    try {
+                        cfgFile.writeText("{}\n")
+                        cfgFile.setReadable(true, false)
+                        cfgFile.setWritable(true, false)
+                    } catch (_: Exception) {}
+                }
+                File(h, ".local/share/opencode").mkdirs()
+                File(h, ".cache/opencode").mkdirs()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure opencode dirs", e)
+        }
+    }
+
+    fun ensureMountpoint(root: File) {
+        try {
+            val script = "#!/bin/sh\n" +
+                "for arg in \"\$@\"; do\n" +
+                "    case \"\$arg\" in\n" +
+                "        /proc|/sys|/dev|/dev/pts|/proc/|/sys/|/dev/|/dev/shm) exit 0 ;;\n" +
+                "    esac\n" +
+                "done\n" +
+                "for cand in /bin/mountpoint.orig /usr/bin/mountpoint.orig /bin/mountpoint /usr/bin/mountpoint; do\n" +
+                "    if [ -x \"\$cand\" ] && [ \"\$cand\" != \"\$0\" ]; then\n" +
+                "        exec \"\$cand\" \"\$@\"\n" +
+                "    fi\n" +
+                "done\n" +
+                "exit 0\n"
+            val targets = listOf(
+                File(root, "usr/local/bin/mountpoint"),
+                File(root, "usr/bin/mountpoint"),
+                File(root, "bin/mountpoint")
+            )
+            for (t in targets) {
+                if (!t.exists() || !t.canExecute()) {
+                    try {
+                        t.parentFile?.mkdirs()
+                        t.writeText(script)
+                        t.setExecutable(true, false)
+                        t.setReadable(true, false)
+                        try { android.system.Os.chmod(t.absolutePath, 493) } catch (_: Exception) {}
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure mountpoint", e)
+        }
+    }
+
+    fun ensureJavaCaDirs(root: File) {
+        try {
+            File(root, "etc/ssl/certs/java").mkdirs()
+            File(root, "var/lib/ca-certificates-java").mkdirs()
+            val etcJava = File(root, "etc/.java/.systemPrefs")
+            etcJava.mkdirs()
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure Java CA dirs", e)
         }
     }
 

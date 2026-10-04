@@ -494,14 +494,57 @@ chmod 0644 extra-rootfs/usr/share/nano/default.nanorc
 
 cat << 'EOFOPENCODE' > extra-rootfs/usr/local/bin/opencode
 #!/bin/bash
+mkdir -p "$HOME/.config/opencode" "$HOME/.local/share/opencode" "$HOME/.cache/opencode" 2>/dev/null || true
+if [ ! -f "$HOME/.config/opencode/opencode.json" ]; then
+    echo "{}" > "$HOME/.config/opencode/opencode.json" 2>/dev/null || true
+fi
 for cand in "$HOME/.opencode/bin/opencode" "/home/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "/home/.local/bin/opencode"; do
     if [ -x "$cand" ] || [ -f "$cand" ]; then
         chmod +x "$cand" 2>/dev/null || true
         exec "$cand" "$@"
     fi
 done
-echo "opencode is not installed yet." >&2
-echo "You can install it with: curl -fsSL https://opencode.ai/install | bash" >&2
+echo "=========================================================="
+echo " OpenCode CLI is not yet installed."
+echo " Installing OpenCode CLI (high-speed native installer)..."
+echo "=========================================================="
+ARCH="$(uname -m)"
+case "$ARCH" in
+    aarch64|arm64) TARGET_ARCH="linux-arm64" ;;
+    x86_64|amd64) TARGET_ARCH="linux-x64" ;;
+    *) TARGET_ARCH="linux-arm64" ;;
+esac
+INSTALL_DIR="$HOME/.opencode/bin"
+mkdir -p "$INSTALL_DIR"
+TMP_DIR="${TMPDIR:-/tmp}/opencode_setup_$$"
+mkdir -p "$TMP_DIR"
+VERSION="0.0.0-beta-17236"
+META="$(curl -sSL --max-time 6 https://opencode.ai/update/api/latest/cli/npm 2>/dev/null || true)"
+V_CAND="$(echo "$META" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+if [ -n "$V_CAND" ]; then VERSION="$V_CAND"; fi
+echo "Downloading OpenCode CLI v$VERSION for $TARGET_ARCH..."
+TAR_URL="https://registry.npmjs.org/@opencode/cli-$TARGET_ARCH/-/cli-$TARGET_ARCH-$VERSION.tgz"
+if ! curl -# -L -f -o "$TMP_DIR/opencode.tgz" "$TAR_URL"; then
+    curl -# -L -f -o "$TMP_DIR/opencode.tgz" "https://registry.npmjs.org/@opencode-ai/cli-$TARGET_ARCH/-/cli-$TARGET_ARCH-$VERSION.tgz" || true
+fi
+if [ -f "$TMP_DIR/opencode.tgz" ] && [ -s "$TMP_DIR/opencode.tgz" ]; then
+    tar -xzf "$TMP_DIR/opencode.tgz" -C "$TMP_DIR"
+    if [ -f "$TMP_DIR/package/bin/opencode" ]; then
+        mv -f "$TMP_DIR/package/bin/opencode" "$INSTALL_DIR/opencode"
+        chmod 755 "$INSTALL_DIR/opencode"
+        rm -rf "$TMP_DIR"
+        echo "OpenCode CLI installed successfully!"
+        exec "$INSTALL_DIR/opencode" "$@"
+    fi
+fi
+rm -rf "$TMP_DIR"
+echo "Direct install failed, trying fallback installer..."
+curl -f -# -L https://opencode.ai/v2/install | bash -s -- --no-modify-path 2>/dev/null || true
+for cand in "$HOME/.opencode/bin/opencode" "/home/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "/home/.local/bin/opencode"; do
+    if [ -x "$cand" ]; then
+        exec "$cand" "$@"
+    fi
+done
 exit 127
 EOFOPENCODE
 chmod 0755 extra-rootfs/usr/local/bin/opencode
@@ -514,11 +557,56 @@ for cand in "$HOME/.local/bin/muse" "/home/.local/bin/muse" "$HOME/.local/bin/mu
         exec "$cand" "$@"
     fi
 done
-echo "muse is not installed yet." >&2
-echo "You can install it with: curl -fsSL https://muse.meta.com/install.sh | bash" >&2
+echo "=========================================================="
+echo " Meta Muse Code CLI is not yet installed."
+echo " Installing Meta Muse Code CLI..."
+echo "=========================================================="
+mkdir -p "$HOME/.local/bin"
+echo "Installing official Meta Muse Code binary via direct CDN mirror..."
+MUSE_VER="1.4.2-R4684.1"
+MUSE_URL="https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=$MUSE_VER&file=muse-aarch64-linux"
+MUSE_BIN="$HOME/.local/bin/muse-bin-$MUSE_VER"
+if curl -# -L -f -o "$MUSE_BIN" "$MUSE_URL"; then
+    chmod 755 "$MUSE_BIN"
+    echo "$MUSE_VER" > "$HOME/.local/bin/.muse-version"
+    ln -sf "muse-bin-$MUSE_VER" "$HOME/.local/bin/muse"
+    echo "Meta Muse Code CLI v$MUSE_VER installed successfully!"
+    exec "$MUSE_BIN" "$@"
+fi
+echo "Direct CDN mirror failed, trying official installer script..."
+curl -fsSL https://dev.meta.ai/install.sh 2>/dev/null | bash 2>/dev/null || true
+for cand in "$HOME/.local/bin/muse" "/home/.local/bin/muse"; do
+    if [ -x "$cand" ]; then
+        exec "$cand" "$@"
+    fi
+done
+echo "Failed to install Muse Code CLI. Please check internet connection."
 exit 127
 EOFMUSE
 chmod 0755 extra-rootfs/usr/local/bin/muse
+
+cat << 'EOFMP' > extra-rootfs/usr/local/bin/mountpoint
+#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        /proc|/sys|/dev|/dev/pts|/proc/|/sys/|/dev/|/dev/shm) exit 0 ;;
+    esac
+done
+for cand in /bin/mountpoint.orig /usr/bin/mountpoint.orig /bin/mountpoint /usr/bin/mountpoint; do
+    if [ -x "$cand" ] && [ "$cand" != "$0" ]; then
+        exec "$cand" "$@"
+    fi
+done
+exit 0
+EOFMP
+chmod 0755 extra-rootfs/usr/local/bin/mountpoint
+
+mkdir -p extra-rootfs/tmp/shm extra-rootfs/dev
+chmod 1777 extra-rootfs/tmp/shm 2>/dev/null || true
+ln -sf /tmp/shm extra-rootfs/dev/shm 2>/dev/null || true
+
+mkdir -p extra-rootfs/etc/ssl/certs/java extra-rootfs/var/lib/ca-certificates-java extra-rootfs/etc/.java/.systemPrefs
+mkdir -p extra-rootfs/etc/gnupg extra-rootfs/home/.gnupg extra-rootfs/root/.gnupg
 
 mkdir -p extra-rootfs/etc/profile.d
 cat << 'EOFENV' > extra-rootfs/etc/profile.d/00-env.sh
@@ -543,20 +631,25 @@ if [ ! -f extra-rootfs/etc/machine-id ]; then
 fi
 cp extra-rootfs/etc/machine-id extra-rootfs/var/lib/dbus/machine-id 2>/dev/null || true
 
-for p in extra-rootfs/usr/sbin extra-rootfs/usr/bin; do
+for p in extra-rootfs/usr/sbin extra-rootfs/usr/bin extra-rootfs/bin extra-rootfs/sbin; do
     mkdir -p "$p"
-    printf '#!/bin/sh\nexit 0\n' > "$p/systemd-machine-id-setup"
-    chmod 0755 "$p/systemd-machine-id-setup"
+    for tool in systemd-machine-id-setup systemd-sysusers systemd-tmpfiles; do
+        printf '#!/bin/sh\nexit 0\n' > "$p/$tool"
+        chmod 0755 "$p/$tool"
+    done
 done
 
 mkdir -p extra-rootfs/var/lib/dpkg
 if [ ! -f extra-rootfs/var/lib/dpkg/diversions ]; then
     touch extra-rootfs/var/lib/dpkg/diversions
 fi
-for div_path in /usr/bin/systemd-machine-id-setup /bin/systemd-machine-id-setup /usr/sbin/systemd-machine-id-setup; do
-    if ! grep -q "^$div_path$" extra-rootfs/var/lib/dpkg/diversions 2>/dev/null; then
-        printf '%s\n%s.distrib\n:\n' "$div_path" "$div_path" >> extra-rootfs/var/lib/dpkg/diversions
-    fi
+for tool in systemd-machine-id-setup systemd-sysusers systemd-tmpfiles; do
+    for base in /usr/bin /bin /usr/sbin /sbin; do
+        div_path="$base/$tool"
+        if ! grep -q "^$div_path$" extra-rootfs/var/lib/dpkg/diversions 2>/dev/null; then
+            printf '%s\n%s.distrib\n:\n' "$div_path" "$div_path" >> extra-rootfs/var/lib/dpkg/diversions
+        fi
+    done
 done
 chmod 0644 extra-rootfs/var/lib/dpkg/diversions
 

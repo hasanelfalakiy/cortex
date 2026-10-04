@@ -13,7 +13,7 @@ class TerminalEmulator(
     val buffer = TerminalBuffer(rows, cols)
 
     private enum class State {
-        NORMAL, ESCAPE, CSI, OSC, CHARSET
+        NORMAL, ESCAPE, CSI, OSC, CHARSET, STRING_IGNORE
     }
 
     private var state = State.NORMAL
@@ -92,6 +92,23 @@ class TerminalEmulator(
             State.CSI -> handleCsi(c)
             State.OSC -> handleOsc(c)
             State.CHARSET -> handleCharset(c)
+            State.STRING_IGNORE -> handleStringIgnore(c)
+        }
+    }
+
+    private var stringIgnoreEscaped = false
+
+    private fun handleStringIgnore(c: Char) {
+        if (c == '\u0007') {
+            state = State.NORMAL
+            stringIgnoreEscaped = false
+        } else if (c == '\u001b') {
+            stringIgnoreEscaped = true
+        } else if (stringIgnoreEscaped && c == '\\') {
+            state = State.NORMAL
+            stringIgnoreEscaped = false
+        } else {
+            stringIgnoreEscaped = false
         }
     }
 
@@ -143,6 +160,11 @@ class TerminalEmulator(
             '(', ')', '*', '+' -> {
                 // Character set selection (e.g. \e(B for US-ASCII, \e(0 for line drawing)
                 state = State.CHARSET
+            }
+            '_', 'P', '^', 'X' -> {
+                // APC (\e_), DCS (\eP), PM (\e^), SOS (\eX)
+                state = State.STRING_IGNORE
+                stringIgnoreEscaped = false
             }
             'c' -> { // Full reset (RIS)
                 buffer.eraseInDisplay(2)
@@ -526,7 +548,9 @@ class TerminalEmulator(
             }
             state = State.NORMAL
         } else {
-            oscBuffer.append(c)
+            if (oscBuffer.length < 8192) {
+                oscBuffer.append(c)
+            }
         }
     }
 }

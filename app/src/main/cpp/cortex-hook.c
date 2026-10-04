@@ -347,20 +347,28 @@ static ssize_t handle_proc_self_exe(char *buf, size_t bufsiz) {
     if (g_real_exe[0] == '\0') {
         int fd = open("/proc/self/cmdline", O_RDONLY);
         if (fd >= 0) {
-            char cmdline[4096];
+            char cmdline[8192];
             ssize_t n = read(fd, cmdline, sizeof(cmdline) - 1);
             close(fd);
             if (n > 0) {
                 cmdline[n] = '\0';
-                char *args[8] = {0};
+                char *args[64] = {0};
                 int ac = 0;
                 char *p = cmdline;
-                while (p < cmdline + n && ac < 8) {
+                while (p < cmdline + n && ac < 64) {
                     args[ac++] = p;
                     p += strlen(p) + 1;
                 }
-                if (ac >= 4 && strcmp(args[1], "--argv0") == 0) {
-                    strncpy(g_real_exe, args[3], sizeof(g_real_exe) - 1);
+                for (int i = 0; i < ac; i++) {
+                    if (strcmp(args[i], "--argv0") == 0 && i + 2 < ac) {
+                        strncpy(g_real_exe, args[i + 2], sizeof(g_real_exe) - 1);
+                        g_real_exe[sizeof(g_real_exe) - 1] = '\0';
+                        break;
+                    }
+                }
+                if (g_real_exe[0] == '\0' && ac > 0 && args[0] && args[0][0] != '\0') {
+                    strncpy(g_real_exe, args[0], sizeof(g_real_exe) - 1);
+                    g_real_exe[sizeof(g_real_exe) - 1] = '\0';
                 }
             }
         }
@@ -439,6 +447,12 @@ static const char *rewrite_path(const char *path, char *buffer, size_t bufsize) 
     if (strncmp(path, g_cortex_root, root_len) == 0 &&
         (path[root_len] == '/' || path[root_len] == '\0')) {
         return path;
+    }
+
+    // POSIX shared memory (/dev/shm) redirection to Cortex rootfs tmp/shm
+    if (strncmp(path, "/dev/shm", 8) == 0 && (path[8] == '/' || path[8] == '\0')) {
+        snprintf(buffer, bufsize, "%s/tmp/shm%s", g_cortex_root, path + 8);
+        return buffer;
     }
 
     // Real host Android kernel & system mounts
@@ -565,6 +579,15 @@ void *dlmopen(Lmid_t lmid, const char *filename, int flags) {
 int open(const char *pathname, int flags, ...) {
     static int (*orig_open)(const char *, int, ...) = NULL;
     if (!orig_open) orig_open = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, "open");
+    init_cortex_hook();
+    char exe_buf[PATH_MAX];
+    if (is_proc_self_exe(pathname)) {
+        if (g_real_exe[0] != '\0') {
+            pathname = g_real_exe;
+        } else if (handle_proc_self_exe(exe_buf, sizeof(exe_buf)) > 0) {
+            pathname = exe_buf;
+        }
+    }
     char buf[PATH_MAX];
     const char *target = rewrite_path(pathname, buf, sizeof(buf));
     if (open_needs_mode(flags)) {
@@ -581,6 +604,15 @@ int open(const char *pathname, int flags, ...) {
 int openat(int dirfd, const char *pathname, int flags, ...) {
     static int (*orig_openat)(int, const char *, int, ...) = NULL;
     if (!orig_openat) orig_openat = (int (*)(int, const char *, int, ...))dlsym(RTLD_NEXT, "openat");
+    init_cortex_hook();
+    char exe_buf[PATH_MAX];
+    if (is_proc_self_exe(pathname)) {
+        if (g_real_exe[0] != '\0') {
+            pathname = g_real_exe;
+        } else if (handle_proc_self_exe(exe_buf, sizeof(exe_buf)) > 0) {
+            pathname = exe_buf;
+        }
+    }
     char buf[PATH_MAX];
     const char *target = (pathname && pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
     if (open_needs_mode(flags)) {
@@ -624,6 +656,47 @@ FILE *freopen(const char *pathname, const char *mode, FILE *stream) {
     char buf[PATH_MAX];
     const char *target = rewrite_path(pathname, buf, sizeof(buf));
     return orig_freopen(target, mode, stream);
+}
+
+// Hook write
+ssize_t write(int fd, const void *buf, size_t count) {
+    static ssize_t (*orig_write)(int, const void *, size_t) = NULL;
+    if (!orig_write) orig_write = (ssize_t (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "write");
+    if (!buf || count == 0) return orig_write ? orig_write(fd, buf, count) : 0;
+
+    // Filter out [GNUPG:] ERROR add_keyblock_resource so apt update runs cleanly without warnings
+    if (count >= 20 && memmem(buf, count, "add_keyblock_resource", 21) != NULL) {
+        const char *p = (const char *)buf;
+        const char *match = (const char *)memmem(buf, count, "[GNUPG:] ERROR add_keyblock_resource", 36);
+        if (!match) match = (const char *)memmem(buf, count, "ERROR add_keyblock_resource", 27);
+        if (!match) match = (const char *)memmem(buf, count, "add_keyblock_resource", 21);
+        if (match) {
+            const char *line_start = match;
+            while (line_start > p && *(line_start - 1) != '\n') {
+                line_start--;
+            }
+            const char *line_end = (const char *)memchr(match, '\n', count - (match - p));
+            if (line_end) line_end++;
+            else line_end = p + count;
+
+            size_t prefix_len = line_start - p;
+            size_t suffix_len = (p + count) - line_end;
+            if (prefix_len == 0 && suffix_len == 0) {
+                return count;
+            }
+            char *filtered = (char *)malloc(prefix_len + suffix_len + 1);
+            if (filtered) {
+                if (prefix_len > 0) memcpy(filtered, p, prefix_len);
+                if (suffix_len > 0) memcpy(filtered + prefix_len, line_end, suffix_len);
+                ssize_t ret = orig_write ? orig_write(fd, filtered, prefix_len + suffix_len) : (prefix_len + suffix_len);
+                (void)ret;
+                free(filtered);
+                return count;
+            }
+            return count;
+        }
+    }
+    return orig_write ? orig_write(fd, buf, count) : -1;
 }
 
 // Hook mkstemp
@@ -1139,6 +1212,34 @@ int mkdirat(int dirfd, const char *pathname, mode_t mode) {
     char buf[PATH_MAX];
     const char *target = (pathname && pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
     return orig_mkdirat(dirfd, target, mode);
+}
+
+static void ensure_dir_exists(const char *path) {
+    if (!path || path[0] == '\0') return;
+    char tmp[PATH_MAX];
+    strncpy(tmp, path, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            mkdir(tmp, 0755);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, 0755);
+}
+
+// Hook inotify_add_watch
+int inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
+    static int (*orig_inotify_add_watch)(int, const char *, uint32_t) = NULL;
+    if (!orig_inotify_add_watch) orig_inotify_add_watch = (int (*)(int, const char *, uint32_t))dlsym(RTLD_NEXT, "inotify_add_watch");
+    if (!pathname) return -1;
+    char buf[PATH_MAX];
+    const char *target = rewrite_path(pathname, buf, sizeof(buf));
+    if (target && access(target, F_OK) != 0) {
+        ensure_dir_exists(target);
+    }
+    return orig_inotify_add_watch ? orig_inotify_add_watch(fd, target, mask) : -1;
 }
 
 // Hook rename
@@ -2243,6 +2344,15 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
         }
     }
 
+    int is_gpgv_bin = (chosen_real_exe && (strstr(chosen_real_exe, "gpgv") != NULL));
+    if (is_gpgv_bin && g_cortex_root[0] != '\0') {
+        char *str = malloc(PATH_MAX + 32);
+        if (str) {
+            snprintf(str, PATH_MAX + 32, "GNUPGHOME=%s/etc/gnupg", g_cortex_root);
+            new_env[dst++] = str;
+        }
+    }
+
     if (!has_preload && hook_path[0] != '\0') {
         char *str = malloc(PATH_MAX + 16);
         if (str) {
@@ -2453,12 +2563,31 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
     if (strcmp(f_base, "ldconfig") == 0 ||
         strcmp(f_base, "ldconfig.real") == 0 ||
         strcmp(f_base, "systemd-machine-id-setup") == 0 ||
+        strcmp(f_base, "systemd-sysusers") == 0 ||
+        strcmp(f_base, "systemd-tmpfiles") == 0 ||
         strcmp(f_base, "start-stop-daemon") == 0 ||
         strcmp(prog_name, "ldconfig") == 0 ||
         strcmp(prog_name, "ldconfig.real") == 0 ||
         strcmp(prog_name, "systemd-machine-id-setup") == 0 ||
+        strcmp(prog_name, "systemd-sysusers") == 0 ||
+        strcmp(prog_name, "systemd-tmpfiles") == 0 ||
         strcmp(prog_name, "start-stop-daemon") == 0) {
         _exit(0);
+    }
+    if (strcmp(f_base, "mountpoint") == 0 || strcmp(prog_name, "mountpoint") == 0) {
+        int is_virtual_fs = 0;
+        for (int i = 1; argv && argv[i]; i++) {
+            if (strcmp(argv[i], "/proc") == 0 || strcmp(argv[i], "/proc/") == 0 ||
+                strcmp(argv[i], "/sys") == 0 || strcmp(argv[i], "/sys/") == 0 ||
+                strcmp(argv[i], "/dev") == 0 || strcmp(argv[i], "/dev/") == 0 ||
+                strcmp(argv[i], "/dev/pts") == 0) {
+                is_virtual_fs = 1;
+                break;
+            }
+        }
+        if (is_virtual_fs) {
+            _exit(0);
+        }
     }
     if (strcmp(f_base, "policy-rc.d") == 0 || strcmp(prog_name, "policy-rc.d") == 0) {
         _exit(101);
@@ -2504,13 +2633,25 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
                             snprintf(hook_so, sizeof(hook_so), "%s/lib/libcortex-hook.so", g_cortex_root);
                         }
 
-                        char **new_argv = (char **)calloc(argc + 8, sizeof(char *));
+                        char ld_lib_path[PATH_MAX * 4] = {0};
+                        snprintf(ld_lib_path, sizeof(ld_lib_path),
+                                 "%s/lib:%s/usr/lib:%s/lib/aarch64-linux-gnu:%s/usr/lib/aarch64-linux-gnu:"
+                                 "%s/usr/lib/aarch64-linux-gnu/systemd:%s/lib/aarch64-linux-gnu/systemd:"
+                                 "%s/usr/lib/systemd:%s/lib/systemd:%s/lib/arm-linux-gnueabihf:%s/usr/lib/arm-linux-gnueabihf:"
+                                 "%s/usr/lib/arm-linux-gnueabihf/systemd:%s/lib/arm-linux-gnueabihf/systemd:%s/usr/local/lib",
+                                 g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root,
+                                 g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root,
+                                 g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root);
+
+                        char **new_argv = (char **)calloc(argc + 16, sizeof(char *));
                         int nidx = 0;
                         new_argv[nidx++] = ld_so;
                         if (hook_so[0] != '\0' && access(hook_so, F_OK) == 0) {
                             new_argv[nidx++] = (char *)"--preload";
                             new_argv[nidx++] = hook_so;
                         }
+                        new_argv[nidx++] = (char *)"--library-path";
+                        new_argv[nidx++] = ld_lib_path;
                         new_argv[nidx++] = (char *)"--argv0";
                         new_argv[nidx++] = (char *)((argc > 0 && argv[0]) ? argv[0] : prog_name);
                         new_argv[nidx++] = (char *)target;
@@ -2547,6 +2688,23 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
                                 }
                             }
                             new_argv[nidx++] = (char *)cur_arg;
+                        }
+                        if (is_gpgv) {
+                            int has_keyring = 0;
+                            for (int k = 0; k < nidx; k++) {
+                                if (strcmp(new_argv[k], "--keyring") == 0 || strncmp(new_argv[k], "--keyring=", 10) == 0) {
+                                    has_keyring = 1;
+                                    break;
+                                }
+                            }
+                            if (!has_keyring) {
+                                char *def_kr = (char *)malloc(PATH_MAX);
+                                if (def_kr) {
+                                    snprintf(def_kr, PATH_MAX, "%s/usr/share/keyrings/ubuntu-archive-keyring.gpg", g_cortex_root);
+                                    new_argv[nidx++] = (char *)"--keyring";
+                                    new_argv[nidx++] = def_kr;
+                                }
+                            }
                         }
                         new_argv[nidx] = NULL;
                         return orig_execve(ld_so, new_argv, prepare_cortex_env(envp, target));
@@ -2812,10 +2970,14 @@ int posix_spawn(pid_t *pid, const char *path,
     if (strcmp(f_base, "ldconfig") == 0 ||
         strcmp(f_base, "ldconfig.real") == 0 ||
         strcmp(f_base, "systemd-machine-id-setup") == 0 ||
+        strcmp(f_base, "systemd-sysusers") == 0 ||
+        strcmp(f_base, "systemd-tmpfiles") == 0 ||
         strcmp(f_base, "start-stop-daemon") == 0 ||
         strcmp(prog_name, "ldconfig") == 0 ||
         strcmp(prog_name, "ldconfig.real") == 0 ||
         strcmp(prog_name, "systemd-machine-id-setup") == 0 ||
+        strcmp(prog_name, "systemd-sysusers") == 0 ||
+        strcmp(prog_name, "systemd-tmpfiles") == 0 ||
         strcmp(prog_name, "start-stop-daemon") == 0) {
         pid_t child = fork();
         if (child == 0) {
@@ -2825,6 +2987,28 @@ int posix_spawn(pid_t *pid, const char *path,
             return 0;
         }
         return errno;
+    }
+    if (strcmp(f_base, "mountpoint") == 0 || strcmp(prog_name, "mountpoint") == 0) {
+        int is_virtual_fs = 0;
+        for (int i = 1; argv && argv[i]; i++) {
+            if (strcmp(argv[i], "/proc") == 0 || strcmp(argv[i], "/proc/") == 0 ||
+                strcmp(argv[i], "/sys") == 0 || strcmp(argv[i], "/sys/") == 0 ||
+                strcmp(argv[i], "/dev") == 0 || strcmp(argv[i], "/dev/") == 0 ||
+                strcmp(argv[i], "/dev/pts") == 0) {
+                is_virtual_fs = 1;
+                break;
+            }
+        }
+        if (is_virtual_fs) {
+            pid_t child = fork();
+            if (child == 0) {
+                _exit(0);
+            } else if (child > 0) {
+                if (pid) *pid = child;
+                return 0;
+            }
+            return errno;
+        }
     }
     if (strcmp(f_base, "policy-rc.d") == 0 || strcmp(prog_name, "policy-rc.d") == 0) {
         pid_t child = fork();
@@ -2880,7 +3064,17 @@ int posix_spawn(pid_t *pid, const char *path,
             snprintf(hook_so, sizeof(hook_so), "%s/lib/libcortex-hook.so", g_cortex_root);
         }
 
-        char **new_argv = (char **)calloc(argc + 8, sizeof(char *));
+        char ld_lib_path[PATH_MAX * 4] = {0};
+        snprintf(ld_lib_path, sizeof(ld_lib_path),
+                 "%s/lib:%s/usr/lib:%s/lib/aarch64-linux-gnu:%s/usr/lib/aarch64-linux-gnu:"
+                 "%s/usr/lib/aarch64-linux-gnu/systemd:%s/lib/aarch64-linux-gnu/systemd:"
+                 "%s/usr/lib/systemd:%s/lib/systemd:%s/lib/arm-linux-gnueabihf:%s/usr/lib/arm-linux-gnueabihf:"
+                 "%s/usr/lib/arm-linux-gnueabihf/systemd:%s/lib/arm-linux-gnueabihf/systemd:%s/usr/local/lib",
+                 g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root,
+                 g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root,
+                 g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root);
+
+        char **new_argv = (char **)calloc(argc + 16, sizeof(char *));
         if (new_argv) {
             int nidx = 0;
             new_argv[nidx++] = ld_so;
@@ -2888,6 +3082,8 @@ int posix_spawn(pid_t *pid, const char *path,
                 new_argv[nidx++] = (char *)"--preload";
                 new_argv[nidx++] = hook_so;
             }
+            new_argv[nidx++] = (char *)"--library-path";
+            new_argv[nidx++] = ld_lib_path;
             new_argv[nidx++] = (char *)"--argv0";
             new_argv[nidx++] = (char *)((argc > 0 && argv && argv[0]) ? argv[0] : prog_name);
             new_argv[nidx++] = (char *)target;
@@ -2924,6 +3120,23 @@ int posix_spawn(pid_t *pid, const char *path,
                     }
                 }
                 new_argv[nidx++] = (char *)cur_arg;
+            }
+            if (is_gpgv) {
+                int has_keyring = 0;
+                for (int k = 0; k < nidx; k++) {
+                    if (strcmp(new_argv[k], "--keyring") == 0 || strncmp(new_argv[k], "--keyring=", 10) == 0) {
+                        has_keyring = 1;
+                        break;
+                    }
+                }
+                if (!has_keyring) {
+                    char *def_kr = (char *)malloc(PATH_MAX);
+                    if (def_kr) {
+                        snprintf(def_kr, PATH_MAX, "%s/usr/share/keyrings/ubuntu-archive-keyring.gpg", g_cortex_root);
+                        new_argv[nidx++] = (char *)"--keyring";
+                        new_argv[nidx++] = def_kr;
+                    }
+                }
             }
             new_argv[nidx] = NULL;
 

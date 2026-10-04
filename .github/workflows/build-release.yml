@@ -112,7 +112,7 @@ jobs:
           cp extra-rootfs/etc/ssl/certs/ca-certificates.crt extra-rootfs/etc/ssl/cert.pem
           cp extra-rootfs/etc/ssl/certs/ca-certificates.crt extra-rootfs/usr/lib/ssl/cert.pem
           cp extra-rootfs/etc/ssl/certs/ca-certificates.crt extra-rootfs/etc/pki/tls/certs/ca-bundle.crt
-          mkdir -p extra-rootfs/usr/share/keyrings extra-rootfs/etc/apt/keyrings extra-rootfs/etc/apt/trusted.gpg.d
+          mkdir -p extra-rootfs/usr/share/keyrings extra-rootfs/etc/apt/keyrings extra-rootfs/etc/apt/trusted.gpg.d extra-rootfs/etc/gnupg extra-rootfs/home/.gnupg extra-rootfs/root/.gnupg
           if [ -d /usr/share/keyrings ]; then
             cp -r /usr/share/keyrings/* extra-rootfs/usr/share/keyrings/ 2>/dev/null || true
           fi
@@ -121,6 +121,9 @@ jobs:
             cp extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg extra-rootfs/etc/apt/keyrings/ubuntu-archive-keyring.gpg 2>/dev/null || true
             cp extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg extra-rootfs/etc/apt/trusted.gpg 2>/dev/null || true
             cp extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg extra-rootfs/etc/apt/trusted.gpg.d/ubuntu-archive-keyring.gpg 2>/dev/null || true
+            cp extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg extra-rootfs/etc/gnupg/trustedkeys.gpg 2>/dev/null || true
+            cp extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg extra-rootfs/home/.gnupg/trustedkeys.gpg 2>/dev/null || true
+            cp extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg extra-rootfs/root/.gnupg/trustedkeys.gpg 2>/dev/null || true
           fi
           if [ -d /usr/share/dpkg ]; then
             cp -r /usr/share/dpkg/* extra-rootfs/usr/share/dpkg/
@@ -329,7 +332,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.76"
+          VERSION="v1.24.77"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -340,25 +343,26 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.76 — Material 3 UI Redesign, Zero-Warning APT Update & Resilient OpenCode / Muse Launchers
+          ### Cortex Release v1.24.77 — New Brand Icon, Full OpenJDK 17 Support, OpenCode Crash Fix & Resilient Package Engine
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.76:
-          - **Modern Material 3 Frontend & Smooth UX**:
-            - Complete Material 3 dark surface & tonal elevation palette (Catppuccin Mocha / Material 3 dark theme).
-            - Redesigned soft rounded pill/squircle virtual key toolbar (10dp corners with subtle stroke, high contrast active modifiers).
-            - Upgraded Material 3 capsule pill search bar (24dp rounded shape) with smooth slide animations.
-            - Redesigned Material 3 Navigation Drawer with rounded container (24dp), session cards with active indicators, and filled tonal action buttons.
-            - Material 3 rounded progress update dialog with smooth progress indicators.
+          #### What's New in v1.24.77:
+          - **Fresh Brand Identity & Modern App Icon**:
+            - Brand-new app icon featuring the Android mascot peeking over the "C" monogram on a clean lavender background with adaptive squircle mipmaps across all device densities.
+          - **Comprehensive Package Installation & OpenJDK 17 Fix (Closes #3 & #4)**:
+            - **Dynamic Linker Search Path (`--library-path`)**: Explicitly passed all multi-arch library paths (`/usr/lib/aarch64-linux-gnu/systemd`, `/usr/lib/systemd`, etc.) to `ld.so` in `execve` and `posix_spawn`. This permanently prevents `error while loading shared libraries: libsystemd-shared-255.so: cannot open shared object file: No such file or directory` even when `dpkg` strips environment variables.
+            - **Systemd Maintainer Tools Interception**: Replaced `systemd-sysusers`, `systemd-tmpfiles`, and `systemd-machine-id-setup` with safe bypass stubs and dpkg diversions so package configuration never fails.
+            - **Java HotSpot Runtime Discovery**: Fixed `/proc/self/exe` resolution in `cortex-hook.c` to accurately locate `java` and OpenCode binaries when invoked with `--library-path` and `--argv0`, allowing OpenJDK to find `libjvm.so` and `JAVA_HOME`.
+            - **Virtual FS Mountpoint Checks**: Implemented native `mountpoint` intercept for `/proc`, `/sys`, and `/dev` ensuring `mountpoint -q /proc` passes during `openjdk-17-jre-headless` and `ca-certificates-java` configuration.
+            - **POSIX Shared Memory (`/dev/shm`)**: Transparently redirected `/dev/shm` to `/tmp/shm` with mode `01777` to power Java HotSpot perf counters, Python multiprocessing, and browsers.
+          - **OpenCode Crash Fix & Terminal Escape Sequence Sanitization**:
+            - Intercepted `inotify_add_watch` to auto-create watched config directories on demand, permanently preventing Bun's `fs.watch` `ENOENT: no such file or directory, watch .../.config/opencode` crash.
+            - Swallowed APC, DCS, PM, SOS, and iTerm2/Kitty OSC 1337 sequences so raw escape strings (`1337,s=1...`) never bleed onto the terminal screen.
           - **Clean Zero-Warning APT Update**:
-            - Completely resolved `W: GPG error: ... GPG: add_keyblock_resource 33587281` by directing `gpgv` exclusively to the verified archive keyring and disabling deprecated `trustedparts`.
-            - `cortex-hook.c` dynamically filters non-existent or inaccessible keyrings during `gpgv` execution in both `execve` and `posix_spawn`.
-            - Cleaned up obsolete CD image keyrings from `/etc/apt/trusted.gpg.d`.
+            - Provisioned `trustedkeys.gpg` in `/etc/gnupg/` and user GNUPG homes with verified Ubuntu archive signing keys, eliminating all `GPG: add_keyblock_resource` warnings.
           - **High-Speed OpenCode & Meta Muse Code Launchers**:
-            - Replaced slow trace-pipe installer for `opencode` with a high-speed direct native downloader that fetches and unpacks precompiled binaries in seconds with native curl progress.
-            - Added resilient direct CDN fallback for Meta Muse Code (`muse`) to ensure installation succeeds even if regional network restrictions or captive portals interfere with Meta's channel API.
-            - Guaranteed `$HOME/.opencode/bin` and `$HOME/.local/bin` are always in global interactive shell `PATH`.
+            - Direct CDN downloads for both OpenCode and Meta Muse Code (`muse 1.4.2-R4684.1`) with high-speed curl progress and automatic fallback.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)
