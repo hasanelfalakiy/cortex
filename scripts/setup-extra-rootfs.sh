@@ -631,7 +631,8 @@ if [ ! -f extra-rootfs/etc/machine-id ]; then
 fi
 cp extra-rootfs/etc/machine-id extra-rootfs/var/lib/dbus/machine-id 2>/dev/null || true
 
-for p in extra-rootfs/usr/sbin extra-rootfs/usr/bin extra-rootfs/bin extra-rootfs/sbin; do
+rm -rf extra-rootfs/bin extra-rootfs/sbin 2>/dev/null || true
+for p in extra-rootfs/usr/sbin extra-rootfs/usr/bin; do
     mkdir -p "$p"
     for tool in systemd-machine-id-setup systemd-sysusers systemd-tmpfiles; do
         printf '#!/bin/sh\nexit 0\n' > "$p/$tool"

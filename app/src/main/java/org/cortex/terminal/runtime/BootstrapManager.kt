@@ -1904,9 +1904,7 @@ object BootstrapManager {
             val dummyTools = listOf("systemd-machine-id-setup", "systemd-sysusers", "systemd-tmpfiles")
             val binDirs = listOf(
                 File(root, "usr/bin"),
-                File(root, "usr/sbin"),
-                File(root, "bin"),
-                File(root, "sbin")
+                File(root, "usr/sbin")
             )
             for (tool in dummyTools) {
                 for (bDir in binDirs) {
@@ -2186,8 +2184,7 @@ object BootstrapManager {
                 "exit 0\n"
             val targets = listOf(
                 File(root, "usr/local/bin/mountpoint"),
-                File(root, "usr/bin/mountpoint"),
-                File(root, "bin/mountpoint")
+                File(root, "usr/bin/mountpoint")
             )
             for (t in targets) {
                 if (!t.exists() || !t.canExecute()) {
