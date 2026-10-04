@@ -169,9 +169,10 @@ jobs:
 
           echo "Preparing 64-bit Ubuntu 24.04 LTS minimal bootstrap..."
           docker pull --platform linux/arm64 ubuntu:24.04
-          CID_64=$(docker run -d --platform linux/arm64 ubuntu:24.04 sleep 1800)
+          CID_64=$(docker create --platform linux/arm64 ubuntu:24.04 sleep 1800)
           docker cp hook-libs/libcortex-hook-arm64.so "$CID_64":/usr/lib/libcortex-hook.so
           docker cp extra-rootfs/. "$CID_64":/
+          docker start "$CID_64"
 
           echo "Pre-updating packages and caching APT lists for ARM64..."
           docker exec -e DEBIAN_FRONTEND=noninteractive "$CID_64" apt-get update -o Acquire::Retries=3 || true
@@ -180,14 +181,16 @@ jobs:
           docker exec "$CID_64" rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock* /var/cache/apt/archives/lock 2>/dev/null || true
           docker exec "$CID_64" rm -rf /var/cache/apt/archives/*.deb /tmp/* 2>/dev/null || true
 
+          docker stop "$CID_64"
           docker export "$CID_64" > app/src/main/assets/bootstrap-arm64.tar
           docker rm -f "$CID_64"
 
           echo "Preparing 32-bit Ubuntu 24.04 LTS minimal bootstrap..."
           docker pull --platform linux/arm/v7 ubuntu:24.04
-          CID_32=$(docker run -d --platform linux/arm/v7 ubuntu:24.04 sleep 1800)
+          CID_32=$(docker create --platform linux/arm/v7 ubuntu:24.04 sleep 1800)
           docker cp hook-libs/libcortex-hook-arm.so "$CID_32":/usr/lib/libcortex-hook.so
           docker cp extra-rootfs/. "$CID_32":/
+          docker start "$CID_32"
 
           echo "Pre-updating packages and caching APT lists for ARMv7..."
           docker exec -e DEBIAN_FRONTEND=noninteractive "$CID_32" apt-get update -o Acquire::Retries=3 || true
@@ -196,6 +199,7 @@ jobs:
           docker exec "$CID_32" rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock* /var/cache/apt/archives/lock 2>/dev/null || true
           docker exec "$CID_32" rm -rf /var/cache/apt/archives/*.deb /tmp/* 2>/dev/null || true
 
+          docker stop "$CID_32"
           docker export "$CID_32" > app/src/main/assets/bootstrap-arm.tar
           docker rm -f "$CID_32"
 
