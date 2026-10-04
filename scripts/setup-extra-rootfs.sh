@@ -526,7 +526,7 @@ if [ ! -f extra-rootfs/etc/machine-id ]; then
 fi
 cp extra-rootfs/etc/machine-id extra-rootfs/var/lib/dbus/machine-id 2>/dev/null || true
 
-for p in extra-rootfs/usr/sbin extra-rootfs/bin extra-rootfs/usr/bin; do
+for p in extra-rootfs/usr/sbin extra-rootfs/usr/bin; do
     mkdir -p "$p"
     printf '#!/bin/sh\nexit 0\n' > "$p/systemd-machine-id-setup"
     chmod 0755 "$p/systemd-machine-id-setup"
