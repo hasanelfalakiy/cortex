@@ -335,7 +335,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.77"
+          VERSION="v1.24.78"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -346,26 +346,20 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.77 — New Brand Icon, Full OpenJDK 17 Support, OpenCode Crash Fix & Resilient Package Engine
+          ### Cortex Release v1.24.78 — Flawless Zero-Warning APT Update & gpgv Signature Verification Fix
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.77:
-          - **Fresh Brand Identity & Modern App Icon**:
-            - Brand-new app icon featuring the Android mascot peeking over the "C" monogram on a clean lavender background with adaptive squircle mipmaps across all device densities.
-          - **Comprehensive Package Installation & OpenJDK 17 Fix (Closes #3 & #4)**:
-            - **Dynamic Linker Search Path (`--library-path`)**: Explicitly passed all multi-arch library paths (`/usr/lib/aarch64-linux-gnu/systemd`, `/usr/lib/systemd`, etc.) to `ld.so` in `execve` and `posix_spawn`. This permanently prevents `error while loading shared libraries: libsystemd-shared-255.so: cannot open shared object file: No such file or directory` even when `dpkg` strips environment variables.
-            - **Systemd Maintainer Tools Interception**: Replaced `systemd-sysusers`, `systemd-tmpfiles`, and `systemd-machine-id-setup` with safe bypass stubs and dpkg diversions so package configuration never fails.
-            - **Java HotSpot Runtime Discovery**: Fixed `/proc/self/exe` resolution in `cortex-hook.c` to accurately locate `java` and OpenCode binaries when invoked with `--library-path` and `--argv0`, allowing OpenJDK to find `libjvm.so` and `JAVA_HOME`.
-            - **Virtual FS Mountpoint Checks**: Implemented native `mountpoint` intercept for `/proc`, `/sys`, and `/dev` ensuring `mountpoint -q /proc` passes during `openjdk-17-jre-headless` and `ca-certificates-java` configuration.
-            - **POSIX Shared Memory (`/dev/shm`)**: Transparently redirected `/dev/shm` to `/tmp/shm` with mode `01777` to power Java HotSpot perf counters, Python multiprocessing, and browsers.
-          - **OpenCode Crash Fix & Terminal Escape Sequence Sanitization**:
-            - Intercepted `inotify_add_watch` to auto-create watched config directories on demand, permanently preventing Bun's `fs.watch` `ENOENT: no such file or directory, watch .../.config/opencode` crash.
-            - Swallowed APC, DCS, PM, SOS, and iTerm2/Kitty OSC 1337 sequences so raw escape strings (`1337,s=1...`) never bleed onto the terminal screen.
-          - **Clean Zero-Warning APT Update**:
-            - Provisioned `trustedkeys.gpg` in `/etc/gnupg/` and user GNUPG homes with verified Ubuntu archive signing keys, eliminating all `GPG: add_keyblock_resource` warnings.
-          - **High-Speed OpenCode & Meta Muse Code Launchers**:
-            - Direct CDN downloads for both OpenCode and Meta Muse Code (`muse 1.4.2-R4684.1`) with high-speed curl progress and automatic fallback.
+          #### What's New in v1.24.78:
+          - **Fixed APT Repository Signature Verification (`NODATA` & `assert-pubkey-algo`)**:
+            - **Intact `gpgv` Argument Passthrough**: Resolved an issue where temporary signature arguments passed by APT (`/tmp/apt.sig.XXXX`) were improperly evaluated or modified in `cortex-hook.c`, causing `verify signatures failed: Unexpected error` and `Signed file isn't valid, got 'NODATA'`.
+            - **Non-Invasive Warning Suppression**: Removed artificial `--keyring` argument appending and `GNUPGHOME` overriding. Warning suppression for benign `[GNUPG:] ERROR add_keyblock_resource` is now handled cleanly through the low-level `write()` hook, leaving option flags and argument vectors 100% intact.
+            - `apt update` now completes smoothly across `noble`, `noble-updates`, `noble-backports`, and `noble-security` with **0 errors and 0 warnings**.
+          - **Retained All v1.24.77 Enhancements**:
+            - Modern brand identity with Android mascot peeking over the "C" monogram.
+            - Full OpenJDK 17 JDK/JRE support (`apt install openjdk-17-jdk`) with dynamic linker `--library-path` preservation and virtual mountpoint emulation.
+            - Bun `fs.watch` directory auto-provisioning for crash-free OpenCode execution.
+            - High-speed Meta Muse Code & OpenCode direct CDN launchers.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)

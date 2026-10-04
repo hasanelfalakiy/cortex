@@ -2344,15 +2344,6 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
         }
     }
 
-    int is_gpgv_bin = (chosen_real_exe && (strstr(chosen_real_exe, "gpgv") != NULL));
-    if (is_gpgv_bin && g_cortex_root[0] != '\0') {
-        char *str = malloc(PATH_MAX + 32);
-        if (str) {
-            snprintf(str, PATH_MAX + 32, "GNUPGHOME=%s/etc/gnupg", g_cortex_root);
-            new_env[dst++] = str;
-        }
-    }
-
     if (!has_preload && hook_path[0] != '\0') {
         char *str = malloc(PATH_MAX + 16);
         if (str) {
@@ -2625,8 +2616,6 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
                         const char *prog_name = strrchr(target, '/');
                         prog_name = (prog_name != NULL) ? prog_name + 1 : target;
 
-                        int is_gpgv = (strcmp(prog_name, "gpgv") == 0 || strcmp(prog_name, "gpgv.orig") == 0);
-
                         char hook_so[PATH_MAX] = {0};
                         snprintf(hook_so, sizeof(hook_so), "%s/usr/lib/libcortex-hook.so", g_cortex_root);
                         if (access(hook_so, F_OK) != 0) {
@@ -2656,55 +2645,7 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
                         new_argv[nidx++] = (char *)((argc > 0 && argv[0]) ? argv[0] : prog_name);
                         new_argv[nidx++] = (char *)target;
                         for (int i = 1; i < argc; i++) {
-                            const char *cur_arg = argv[i];
-                            if (is_gpgv && cur_arg) {
-                                if (cur_arg[0] == '/') {
-                                    char *rw = (char *)malloc(PATH_MAX);
-                                    if (rw) {
-                                        rewrite_path(cur_arg, rw, PATH_MAX);
-                                        if (access(rw, R_OK) == 0) {
-                                            new_argv[nidx++] = rw;
-                                        } else {
-                                            free(rw);
-                                            if (nidx > 0 && strcmp(new_argv[nidx - 1], "--keyring") == 0) {
-                                                nidx--;
-                                            }
-                                        }
-                                        continue;
-                                    }
-                                } else if (strncmp(cur_arg, "--keyring=", 10) == 0 && cur_arg[10] == '/') {
-                                    char path_rw[PATH_MAX];
-                                    rewrite_path(cur_arg + 10, path_rw, PATH_MAX);
-                                    if (access(path_rw, R_OK) == 0) {
-                                        char *rw = (char *)malloc(PATH_MAX + 16);
-                                        if (rw) {
-                                            snprintf(rw, PATH_MAX + 16, "--keyring=%s", path_rw);
-                                            new_argv[nidx++] = rw;
-                                            continue;
-                                        }
-                                    } else {
-                                        continue;
-                                    }
-                                }
-                            }
-                            new_argv[nidx++] = (char *)cur_arg;
-                        }
-                        if (is_gpgv) {
-                            int has_keyring = 0;
-                            for (int k = 0; k < nidx; k++) {
-                                if (strcmp(new_argv[k], "--keyring") == 0 || strncmp(new_argv[k], "--keyring=", 10) == 0) {
-                                    has_keyring = 1;
-                                    break;
-                                }
-                            }
-                            if (!has_keyring) {
-                                char *def_kr = (char *)malloc(PATH_MAX);
-                                if (def_kr) {
-                                    snprintf(def_kr, PATH_MAX, "%s/usr/share/keyrings/ubuntu-archive-keyring.gpg", g_cortex_root);
-                                    new_argv[nidx++] = (char *)"--keyring";
-                                    new_argv[nidx++] = def_kr;
-                                }
-                            }
+                            new_argv[nidx++] = (char *)argv[i];
                         }
                         new_argv[nidx] = NULL;
                         return orig_execve(ld_so, new_argv, prepare_cortex_env(envp, target));
@@ -3056,8 +2997,6 @@ int posix_spawn(pid_t *pid, const char *path,
         const char *prog_name = strrchr(target, '/');
         prog_name = (prog_name != NULL) ? prog_name + 1 : target;
 
-        int is_gpgv = (strcmp(prog_name, "gpgv") == 0 || strcmp(prog_name, "gpgv.orig") == 0);
-
         char hook_so[PATH_MAX] = {0};
         snprintf(hook_so, sizeof(hook_so), "%s/usr/lib/libcortex-hook.so", g_cortex_root);
         if (access(hook_so, F_OK) != 0) {
@@ -3088,55 +3027,7 @@ int posix_spawn(pid_t *pid, const char *path,
             new_argv[nidx++] = (char *)((argc > 0 && argv && argv[0]) ? argv[0] : prog_name);
             new_argv[nidx++] = (char *)target;
             for (int i = 1; i < argc; i++) {
-                const char *cur_arg = argv[i];
-                if (is_gpgv && cur_arg) {
-                    if (cur_arg[0] == '/') {
-                        char *rw = (char *)malloc(PATH_MAX);
-                        if (rw) {
-                            rewrite_path(cur_arg, rw, PATH_MAX);
-                            if (access(rw, R_OK) == 0) {
-                                new_argv[nidx++] = rw;
-                            } else {
-                                free(rw);
-                                if (nidx > 0 && strcmp(new_argv[nidx - 1], "--keyring") == 0) {
-                                    nidx--;
-                                }
-                            }
-                            continue;
-                        }
-                    } else if (strncmp(cur_arg, "--keyring=", 10) == 0 && cur_arg[10] == '/') {
-                        char path_rw[PATH_MAX];
-                        rewrite_path(cur_arg + 10, path_rw, PATH_MAX);
-                        if (access(path_rw, R_OK) == 0) {
-                            char *rw = (char *)malloc(PATH_MAX + 16);
-                            if (rw) {
-                                snprintf(rw, PATH_MAX + 16, "--keyring=%s", path_rw);
-                                new_argv[nidx++] = rw;
-                                continue;
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-                new_argv[nidx++] = (char *)cur_arg;
-            }
-            if (is_gpgv) {
-                int has_keyring = 0;
-                for (int k = 0; k < nidx; k++) {
-                    if (strcmp(new_argv[k], "--keyring") == 0 || strncmp(new_argv[k], "--keyring=", 10) == 0) {
-                        has_keyring = 1;
-                        break;
-                    }
-                }
-                if (!has_keyring) {
-                    char *def_kr = (char *)malloc(PATH_MAX);
-                    if (def_kr) {
-                        snprintf(def_kr, PATH_MAX, "%s/usr/share/keyrings/ubuntu-archive-keyring.gpg", g_cortex_root);
-                        new_argv[nidx++] = (char *)"--keyring";
-                        new_argv[nidx++] = def_kr;
-                    }
-                }
+                new_argv[nidx++] = (char *)argv[i];
             }
             new_argv[nidx] = NULL;
 
