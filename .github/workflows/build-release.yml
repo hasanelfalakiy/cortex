@@ -329,7 +329,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.70"
+          VERSION="v1.24.73"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -340,18 +340,23 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.70 — Bulletproof APT Package Management & Repository Trust Override
+          ### Cortex Release v1.24.73 — Native Dynamic Linker Auto-Discovery & UsrMerge Integrity Protection
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.70:
-          - **Guaranteed APT Package Management & Repository Trust**:
-            - Configured DEB822 repository sources (`/etc/apt/sources.list.d/ubuntu.sources`) with `Trusted: yes` across all Noble suites (`noble`, `noble-updates`, `noble-backports`, `noble-security`).
-            - Enabled `Acquire::AllowInsecureRepositories "true"`, `Acquire::AllowDowngradeToInsecureRepositories "true"`, and `APT::Get::AllowUnauthenticated "true"` in APT sandbox configuration.
-            - APT operations (`apt update`, `apt install`, `apt upgrade`) will never be blocked or disabled by repository GPG signature validation issues on Android.
-            - Automatically migrates existing rootfs installations smoothly without losing any user files or configurations.
-          - **Full Native Performance**:
-            - 100% native bare-metal execution on Android without chroot or PRoot.
+          #### What's New in v1.24.73:
+          - **Universal ELF Dynamic Linker Auto-Discovery**:
+            - Added dynamic ELF header inspection in `cortex-pty` and `cortex-hook` to detect binary architecture (`EM_AARCH64`, `EM_ARM`, `EM_X86_64`) and resolve dynamic linkers across all Debian/Ubuntu multiarch directories (`ld-linux-aarch64.so.1`, `ld-2.39.so`, `ld-linux-armhf.so.3`).
+            - Prevents ENOENT (code 127) kernel execution failures when starting native bash or glibc binaries.
+            - Added safe fallback to `/system/bin/sh` if dynamic linker is ever missing, preventing terminal lockup.
+          - **Debian UsrMerge & Symlink Integrity**:
+            - Pre-creates UsrMerge symlinks (`/bin -> usr/bin`, `/sbin -> usr/sbin`, `/lib -> usr/lib`) before archive extraction to prevent EISDIR / EEXIST extraction collisions.
+            - Added `ensureDynamicLinkerSymlinks` to repair missing or broken dynamic linker symlinks automatically on launch and during background updates.
+          - **Startup Race Condition Fix**:
+            - Prevented `MainActivity.onResume()` from creating terminal sessions prematurely while background bootstrap extraction is in progress.
+            - Enhanced `isBootstrapInstalled` to verify dynamic linker existence and complete bootstrap integrity before considering the environment installed.
+          - **Accurate Process ABI Detection**:
+            - Integrated `android.os.Process.is64Bit()` for runtime process ABI detection, guaranteeing 32-bit APKs run 32-bit rootfs and 64-bit APKs run 64-bit rootfs seamlessly.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)

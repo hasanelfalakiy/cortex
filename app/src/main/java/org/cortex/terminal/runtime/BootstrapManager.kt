@@ -326,16 +326,99 @@ object BootstrapManager {
         ensureEssentialBinaries(root, home)
     }
 
-    const val CURRENT_BOOTSTRAP_VERSION = 12472
+    const val CURRENT_BOOTSTRAP_VERSION = 12473
+
+    fun hasDynamicLinker(root: File): Boolean {
+        val candidates = listOf(
+            "usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+            "usr/lib/aarch64-linux-gnu/ld-2.39.so",
+            "lib/ld-linux-aarch64.so.1",
+            "lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+            "usr/lib/ld-linux-aarch64.so.1",
+            "usr/lib64/ld-linux-aarch64.so.1",
+            "lib64/ld-linux-aarch64.so.1",
+            "usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3",
+            "usr/lib/arm-linux-gnueabihf/ld-2.39.so",
+            "lib/ld-linux-armhf.so.3",
+            "lib/arm-linux-gnueabihf/ld-linux-armhf.so.3",
+            "usr/lib/ld-linux-armhf.so.3"
+        )
+        return candidates.any { File(root, it).exists() }
+    }
+
+    fun ensureDynamicLinkerSymlinks(root: File) {
+        try {
+            // Check arm64
+            val ld64Real = File(root, "usr/lib/aarch64-linux-gnu/ld-2.39.so")
+            val ld64Link = File(root, "usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1")
+            if (ld64Real.exists()) {
+                ld64Real.setExecutable(true, false)
+                if (!ld64Link.exists()) {
+                    try {
+                        android.system.Os.symlink("ld-2.39.so", ld64Link.absolutePath)
+                    } catch (e: Exception) {
+                        try { ld64Real.copyTo(ld64Link, overwrite = true) } catch (e2: Exception) {}
+                    }
+                }
+                ld64Link.setExecutable(true, false)
+            }
+
+            // Check arm32
+            val ld32Real = File(root, "usr/lib/arm-linux-gnueabihf/ld-2.39.so")
+            val ld32Link = File(root, "usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3")
+            if (ld32Real.exists()) {
+                ld32Real.setExecutable(true, false)
+                if (!ld32Link.exists()) {
+                    try {
+                        android.system.Os.symlink("ld-2.39.so", ld32Link.absolutePath)
+                    } catch (e: Exception) {
+                        try { ld32Real.copyTo(ld32Link, overwrite = true) } catch (e2: Exception) {}
+                    }
+                }
+                ld32Link.setExecutable(true, false)
+            }
+
+            // Ensure /lib has a direct link or copy to dynamic linker if /lib is not already symlinked
+            val libDir = File(root, "lib")
+            if (libDir.exists() && !java.nio.file.Files.isSymbolicLink(libDir.toPath())) {
+                val direct64 = File(libDir, "ld-linux-aarch64.so.1")
+                if (!direct64.exists()) {
+                    val src = if (ld64Link.exists()) ld64Link else if (ld64Real.exists()) ld64Real else null
+                    if (src != null) {
+                        try {
+                            android.system.Os.symlink(src.absolutePath, direct64.absolutePath)
+                        } catch (e: Exception) {
+                            try { src.copyTo(direct64, overwrite = true) } catch (e2: Exception) {}
+                        }
+                        direct64.setExecutable(true, false)
+                    }
+                }
+                val direct32 = File(libDir, "ld-linux-armhf.so.3")
+                if (!direct32.exists()) {
+                    val src = if (ld32Link.exists()) ld32Link else if (ld32Real.exists()) ld32Real else null
+                    if (src != null) {
+                        try {
+                            android.system.Os.symlink(src.absolutePath, direct32.absolutePath)
+                        } catch (e: Exception) {
+                            try { src.copyTo(direct32, overwrite = true) } catch (e2: Exception) {}
+                        }
+                        direct32.setExecutable(true, false)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure dynamic linker symlinks", e)
+        }
+    }
 
     fun isBootstrapInstalled(context: Context): Boolean {
         val root = Environment.getCortexRoot(context)
         val apt = File(root, "usr/bin/apt")
         val bash = File(root, "usr/bin/bash")
+        val versionFile = File(root, ".cortex_version")
 
-        if (apt.exists() && bash.exists()) {
-            val versionFile = File(root, ".cortex_version")
-            val ver = if (versionFile.exists()) versionFile.readText().trim().toIntOrNull() ?: 0 else 0
+        if (apt.exists() && bash.exists() && hasDynamicLinker(root) && versionFile.exists()) {
+            val ver = versionFile.readText().trim().toIntOrNull() ?: 0
             if (ver < CURRENT_BOOTSTRAP_VERSION) {
                 // Non-destructive update: refresh hook library and version marker
                 // Never re-extract base bootstrap archive over user-installed packages
@@ -347,6 +430,7 @@ object BootstrapManager {
                     ensureUbuntuSources(root)
                     ensureMachineId(root)
                     ensureEssentialBinaries(root, Environment.getHomeDir(context))
+                    ensureDynamicLinkerSymlinks(root)
                     versionFile.writeText(CURRENT_BOOTSTRAP_VERSION.toString())
                 } catch (e: Exception) {
                     android.util.Log.e("BootstrapManager", "Failed to perform non-destructive bootstrap update", e)
@@ -410,6 +494,20 @@ object BootstrapManager {
                 }
             }
 
+            // Pre-create usr directories and UsrMerge symlinks
+            File(root, "usr/bin").mkdirs()
+            File(root, "usr/sbin").mkdirs()
+            File(root, "usr/lib").mkdirs()
+            File(root, "usr/lib64").mkdirs()
+            mapOf("bin" to "usr/bin", "sbin" to "usr/sbin", "lib" to "usr/lib", "lib64" to "usr/lib").forEach { (link, target) ->
+                val linkFile = File(root, link)
+                if (!linkFile.exists()) {
+                    try {
+                        android.system.Os.symlink(target, linkFile.absolutePath)
+                    } catch (e: Exception) {}
+                }
+            }
+
             // Extract archive using high performance native C extractor
             val extractResult = PtyNative.extractTar(tmpTar.absolutePath, root.absolutePath)
             if (extractResult != 0) {
@@ -427,13 +525,15 @@ object BootstrapManager {
             root.walkTopDown().forEach { file ->
                 if (file.isFile) {
                     val pName = file.parentFile?.name
-                    if (pName in listOf("bin", "sbin") || file.name.startsWith("ld-linux")) {
+                    if (pName in listOf("bin", "sbin") || file.name.startsWith("ld-linux") || file.name.startsWith("ld-2.")) {
                         file.setExecutable(true, false)
                         file.setReadable(true, false)
+                        try { android.system.Os.chmod(file.absolutePath, 493) } catch (e: Exception) {}
                     }
                 }
             }
 
+            ensureDynamicLinkerSymlinks(root)
             patchAllDynamicLinkers(root)
             fixAbsoluteSymlinks(root)
 
@@ -488,9 +588,14 @@ object BootstrapManager {
             File(root, "var/lib/apt/lists/partial").mkdirs()
             File(root, "var/cache/apt/archives/partial").mkdirs()
 
-            // Mark bootstrap version
-            File(root, ".cortex_version").writeText(CURRENT_BOOTSTRAP_VERSION.toString())
-            true
+            // Mark bootstrap version only if dynamic linker is present and functional
+            if (hasDynamicLinker(root)) {
+                File(root, ".cortex_version").writeText(CURRENT_BOOTSTRAP_VERSION.toString())
+                true
+            } else {
+                android.util.Log.e("BootstrapManager", "Bootstrap extraction finished but dynamic linker not found!")
+                false
+            }
         } catch (e: Exception) {
             android.util.Log.e("BootstrapManager", "Error extracting bootstrap from APK", e)
             false
@@ -504,17 +609,17 @@ object BootstrapManager {
     fun getInitialShellCommand(context: Context): String {
         val root = Environment.getCortexRoot(context)
         val debianBash = File(root, "usr/bin/bash")
-        if (debianBash.exists()) {
+        if (debianBash.exists() && hasDynamicLinker(root)) {
             debianBash.setExecutable(true, false)
             return debianBash.absolutePath
         }
         val customBash = File(root, "bin/bash")
-        if (customBash.exists()) {
+        if (customBash.exists() && hasDynamicLinker(root)) {
             customBash.setExecutable(true, false)
             return customBash.absolutePath
         }
         val customSh = File(root, "bin/sh")
-        if (customSh.exists()) {
+        if (customSh.exists() && hasDynamicLinker(root)) {
             customSh.setExecutable(true, false)
             return customSh.absolutePath
         }
@@ -2360,12 +2465,17 @@ fi
 CORTEX_LD_SO=""
 for cand_ld in \
     "${'$'}CORTEX_ROOT/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1" \
+    "${'$'}CORTEX_ROOT/usr/lib/aarch64-linux-gnu/ld-2.39.so" \
     "${'$'}CORTEX_ROOT/lib/ld-linux-aarch64.so.1" \
     "${'$'}CORTEX_ROOT/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1" \
     "${'$'}CORTEX_ROOT/usr/lib/ld-linux-aarch64.so.1" \
+    "${'$'}CORTEX_ROOT/usr/lib64/ld-linux-aarch64.so.1" \
+    "${'$'}CORTEX_ROOT/lib64/ld-linux-aarch64.so.1" \
     "${'$'}CORTEX_ROOT/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3" \
+    "${'$'}CORTEX_ROOT/usr/lib/arm-linux-gnueabihf/ld-2.39.so" \
     "${'$'}CORTEX_ROOT/lib/ld-linux-armhf.so.3" \
-    "${'$'}CORTEX_ROOT/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3"; do
+    "${'$'}CORTEX_ROOT/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3" \
+    "${'$'}CORTEX_ROOT/usr/lib/ld-linux-armhf.so.3"; do
     if [ -f "${'$'}cand_ld" ] || [ -x "${'$'}cand_ld" ] || [ -L "${'$'}cand_ld" ]; then
         CORTEX_LD_SO="${'$'}cand_ld"
         break

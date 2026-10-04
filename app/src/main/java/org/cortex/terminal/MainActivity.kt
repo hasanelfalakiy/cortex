@@ -388,7 +388,7 @@ class MainActivity : AppCompatActivity() {
         val current = sessionManager.currentSession
         if (current != null) {
             terminalView.session = current
-        } else if (BootstrapManager.isBootstrapInstalled(this) && sessionManager.sessions.isEmpty()) {
+        } else if (!isBootstrapping && BootstrapManager.isBootstrapInstalled(this) && sessionManager.sessions.isEmpty()) {
             createNewSession()
         }
         terminalView.requestLayout()

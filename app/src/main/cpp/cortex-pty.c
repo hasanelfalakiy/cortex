@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -31,6 +32,93 @@ static char **clean_env_for_system(char *const envp[], int envCount) {
     }
     new_env[dst] = NULL;
     return new_env;
+}
+
+static int find_dynamic_linker(const char *cortex_root, const char *cmd, char *out_ld_so, size_t max_len) {
+    if (!cortex_root || cortex_root[0] == '\0') return 0;
+
+    uint16_t e_machine = 0;
+    if (cmd && cmd[0] != '\0') {
+        int fd = open(cmd, O_RDONLY);
+        if (fd >= 0) {
+            unsigned char ehdr[20];
+            ssize_t n = read(fd, ehdr, sizeof(ehdr));
+            close(fd);
+            if (n >= 20 && ehdr[0] == 0x7f && ehdr[1] == 'E' && ehdr[2] == 'L' && ehdr[3] == 'F') {
+                e_machine = (uint16_t)(ehdr[18] | (ehdr[19] << 8));
+            }
+        }
+    }
+
+    const char *aarch64_cands[] = {
+        "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+        "/usr/lib/aarch64-linux-gnu/ld-2.39.so",
+        "/lib/ld-linux-aarch64.so.1",
+        "/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+        "/usr/lib/ld-linux-aarch64.so.1",
+        "/usr/lib64/ld-linux-aarch64.so.1",
+        "/lib64/ld-linux-aarch64.so.1",
+        "/lib/aarch64-linux-gnu/ld-2.39.so",
+        NULL
+    };
+
+    const char *armhf_cands[] = {
+        "/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3",
+        "/usr/lib/arm-linux-gnueabihf/ld-2.39.so",
+        "/lib/ld-linux-armhf.so.3",
+        "/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3",
+        "/usr/lib/ld-linux-armhf.so.3",
+        "/lib/arm-linux-gnueabihf/ld-2.39.so",
+        "/usr/lib/arm-linux-gnueabi/ld-linux.so.3",
+        "/lib/arm-linux-gnueabi/ld-linux.so.3",
+        NULL
+    };
+
+    const char *x86_64_cands[] = {
+        "/lib64/ld-linux-x86-64.so.2",
+        "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "/usr/lib/x86_64-linux-gnu/ld-2.39.so",
+        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        NULL
+    };
+
+    const char **primary = NULL;
+    const char **secondary = NULL;
+
+    if (e_machine == 183) { // EM_AARCH64
+        primary = aarch64_cands;
+        secondary = armhf_cands;
+    } else if (e_machine == 40) { // EM_ARM
+        primary = armhf_cands;
+        secondary = aarch64_cands;
+    } else if (e_machine == 62) { // EM_X86_64
+        primary = x86_64_cands;
+    } else {
+        #if defined(__aarch64__)
+        primary = aarch64_cands;
+        secondary = armhf_cands;
+        #elif defined(__arm__)
+        primary = armhf_cands;
+        secondary = aarch64_cands;
+        #else
+        primary = x86_64_cands;
+        #endif
+    }
+
+    if (primary) {
+        for (int i = 0; primary[i] != NULL; i++) {
+            snprintf(out_ld_so, max_len, "%s%s", cortex_root, primary[i]);
+            if (access(out_ld_so, F_OK) == 0) return 1;
+        }
+    }
+    if (secondary) {
+        for (int i = 0; secondary[i] != NULL; i++) {
+            snprintf(out_ld_so, max_len, "%s%s", cortex_root, secondary[i]);
+            if (access(out_ld_so, F_OK) == 0) return 1;
+        }
+    }
+
+    return 0;
 }
 
 JNIEXPORT jintArray JNICALL
@@ -208,25 +296,7 @@ Java_org_cortex_terminal_pty_PtyNative_createPty(
 
         if (is_glibc_elf) {
             char ld_so[PATH_MAX] = {0};
-            #if defined(__aarch64__)
-            snprintf(ld_so, sizeof(ld_so), "%s/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1", cortex_root);
-            if (access(ld_so, F_OK) != 0) {
-                snprintf(ld_so, sizeof(ld_so), "%s/lib/ld-linux-aarch64.so.1", cortex_root);
-            }
-            if (access(ld_so, F_OK) != 0) {
-                snprintf(ld_so, sizeof(ld_so), "%s/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1", cortex_root);
-            }
-            #elif defined(__arm__)
-            snprintf(ld_so, sizeof(ld_so), "%s/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3", cortex_root);
-            if (access(ld_so, F_OK) != 0) {
-                snprintf(ld_so, sizeof(ld_so), "%s/lib/ld-linux-armhf.so.3", cortex_root);
-            }
-            if (access(ld_so, F_OK) != 0) {
-                snprintf(ld_so, sizeof(ld_so), "%s/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3", cortex_root);
-            }
-            #endif
-
-            if (access(ld_so, F_OK) == 0) {
+            if (find_dynamic_linker(cortex_root, cmd, ld_so, sizeof(ld_so))) {
                 chmod(ld_so, 0755);
                 chmod(cmd, 0755);
 
@@ -247,6 +317,20 @@ Java_org_cortex_terminal_pty_PtyNative_createPty(
                 char err_buf[256];
                 snprintf(err_buf, sizeof(err_buf), "Cortex: failed to exec ld.so (%s): %s\n", ld_so, strerror(errno));
                 write(STDERR_FILENO, err_buf, strlen(err_buf));
+            } else {
+                char err_buf[512];
+                snprintf(err_buf, sizeof(err_buf),
+                    "Cortex: Dynamic linker (ld.so) not found in %s!\n"
+                    "Ubuntu 24.04 environment may be corrupted or still initializing.\n"
+                    "Falling back to Android system shell...\n\n", cortex_root);
+                write(STDERR_FILENO, err_buf, strlen(err_buf));
+
+                const char *fallback_sh = "/system/bin/sh";
+                if (access(fallback_sh, X_OK) == 0) {
+                    char **sys_env = clean_env_for_system(envp, envCount);
+                    char *fb_argv[] = { (char *)fallback_sh, NULL };
+                    execve(fallback_sh, fb_argv, sys_env);
+                }
             }
         }
 
@@ -461,6 +545,7 @@ static int extract_tar_archive(const char *tar_path, const char *dest_dir) {
             chmod(dest_path, (mode & 0777) | 0700);
         } else if (typeflag == '2') {
             unlink(dest_path);
+            rmdir(dest_path);
             symlink(linkname, dest_path);
         } else if (typeflag == '1') {
             char target_path[PATH_MAX];
@@ -468,11 +553,13 @@ static int extract_tar_archive(const char *tar_path, const char *dest_dir) {
             while (*lrel == '.' || *lrel == '/') lrel++;
             snprintf(target_path, sizeof(target_path), "%s/%s", dest_dir, lrel);
             unlink(dest_path);
+            rmdir(dest_path);
             if (link(target_path, dest_path) != 0) {
                 symlink(target_path, dest_path);
             }
         } else {
             unlink(dest_path);
+            rmdir(dest_path);
             int out_fd = open(dest_path, O_WRONLY | O_CREAT | O_TRUNC, (mode & 0777) | 0600);
             unsigned long long rem = size;
             while (rem > 0) {

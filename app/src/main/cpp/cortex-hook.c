@@ -2298,6 +2298,93 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
     return new_env;
 }
 
+static int find_dynamic_linker(const char *cortex_root, const char *cmd, char *out_ld_so, size_t max_len) {
+    if (!cortex_root || cortex_root[0] == '\0') return 0;
+
+    uint16_t e_machine = 0;
+    if (cmd && cmd[0] != '\0') {
+        int fd = open(cmd, O_RDONLY);
+        if (fd >= 0) {
+            unsigned char ehdr[20];
+            ssize_t n = read(fd, ehdr, sizeof(ehdr));
+            close(fd);
+            if (n >= 20 && ehdr[0] == 0x7f && ehdr[1] == 'E' && ehdr[2] == 'L' && ehdr[3] == 'F') {
+                e_machine = (uint16_t)(ehdr[18] | (ehdr[19] << 8));
+            }
+        }
+    }
+
+    const char *aarch64_cands[] = {
+        "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+        "/usr/lib/aarch64-linux-gnu/ld-2.39.so",
+        "/lib/ld-linux-aarch64.so.1",
+        "/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+        "/usr/lib/ld-linux-aarch64.so.1",
+        "/usr/lib64/ld-linux-aarch64.so.1",
+        "/lib64/ld-linux-aarch64.so.1",
+        "/lib/aarch64-linux-gnu/ld-2.39.so",
+        NULL
+    };
+
+    const char *armhf_cands[] = {
+        "/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3",
+        "/usr/lib/arm-linux-gnueabihf/ld-2.39.so",
+        "/lib/ld-linux-armhf.so.3",
+        "/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3",
+        "/usr/lib/ld-linux-armhf.so.3",
+        "/lib/arm-linux-gnueabihf/ld-2.39.so",
+        "/usr/lib/arm-linux-gnueabi/ld-linux.so.3",
+        "/lib/arm-linux-gnueabi/ld-linux.so.3",
+        NULL
+    };
+
+    const char *x86_64_cands[] = {
+        "/lib64/ld-linux-x86-64.so.2",
+        "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "/usr/lib/x86_64-linux-gnu/ld-2.39.so",
+        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        NULL
+    };
+
+    const char **primary = NULL;
+    const char **secondary = NULL;
+
+    if (e_machine == 183) { // EM_AARCH64
+        primary = aarch64_cands;
+        secondary = armhf_cands;
+    } else if (e_machine == 40) { // EM_ARM
+        primary = armhf_cands;
+        secondary = aarch64_cands;
+    } else if (e_machine == 62) { // EM_X86_64
+        primary = x86_64_cands;
+    } else {
+        #if defined(__aarch64__)
+        primary = aarch64_cands;
+        secondary = armhf_cands;
+        #elif defined(__arm__)
+        primary = armhf_cands;
+        secondary = aarch64_cands;
+        #else
+        primary = x86_64_cands;
+        #endif
+    }
+
+    if (primary) {
+        for (int i = 0; primary[i] != NULL; i++) {
+            snprintf(out_ld_so, max_len, "%s%s", cortex_root, primary[i]);
+            if (access(out_ld_so, F_OK) == 0) return 1;
+        }
+    }
+    if (secondary) {
+        for (int i = 0; secondary[i] != NULL; i++) {
+            snprintf(out_ld_so, max_len, "%s%s", cortex_root, secondary[i]);
+            if (access(out_ld_so, F_OK) == 0) return 1;
+        }
+    }
+
+    return 0;
+}
+
 // Hook execve
 typedef int (*orig_execve_f_type)(const char *filename, char *const argv[], char *const envp[]);
 int execve(const char *filename, char *const argv[], char *const envp[]) {
@@ -2334,27 +2421,7 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
             // 1. Transparently route glibc ELF binaries through ld.so
             if (n >= 4 && (unsigned char)hdr[0] == 0x7f && hdr[1] == 'E' && hdr[2] == 'L' && hdr[3] == 'F') {
                 char ld_so[PATH_MAX] = {0};
-                #if defined(__aarch64__)
-                snprintf(ld_so, sizeof(ld_so), "%s/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1", g_cortex_root);
-                if (access(ld_so, F_OK) != 0) {
-                    snprintf(ld_so, sizeof(ld_so), "%s/lib/ld-linux-aarch64.so.1", g_cortex_root);
-                }
-                if (access(ld_so, F_OK) != 0) {
-                    snprintf(ld_so, sizeof(ld_so), "%s/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1", g_cortex_root);
-                }
-                #elif defined(__arm__)
-                snprintf(ld_so, sizeof(ld_so), "%s/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3", g_cortex_root);
-                if (access(ld_so, F_OK) != 0) {
-                    snprintf(ld_so, sizeof(ld_so), "%s/lib/ld-linux-armhf.so.3", g_cortex_root);
-                }
-                if (access(ld_so, F_OK) != 0) {
-                    snprintf(ld_so, sizeof(ld_so), "%s/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3", g_cortex_root);
-                }
-                #else
-                snprintf(ld_so, sizeof(ld_so), "%s/lib64/ld-linux-x86-64.so.2", g_cortex_root);
-                #endif
-
-                if (access(ld_so, F_OK) == 0 && strcmp(target, ld_so) != 0) {
+                if (find_dynamic_linker(g_cortex_root, target, ld_so, sizeof(ld_so)) && strcmp(target, ld_so) != 0) {
                     chmod(ld_so, 0755);
                     chmod(target, 0755);
 
@@ -2661,19 +2728,6 @@ int posix_spawn(pid_t *pid, const char *path,
         return errno;
     }
 
-    char ld_so[PATH_MAX] = {0};
-#if defined(__aarch64__)
-    snprintf(ld_so, sizeof(ld_so), "%s/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1", g_cortex_root);
-    if (access(ld_so, F_OK) != 0) snprintf(ld_so, sizeof(ld_so), "%s/lib/ld-linux-aarch64.so.1", g_cortex_root);
-    if (access(ld_so, F_OK) != 0) snprintf(ld_so, sizeof(ld_so), "%s/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1", g_cortex_root);
-#elif defined(__arm__)
-    snprintf(ld_so, sizeof(ld_so), "%s/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3", g_cortex_root);
-    if (access(ld_so, F_OK) != 0) snprintf(ld_so, sizeof(ld_so), "%s/lib/ld-linux-armhf.so.3", g_cortex_root);
-    if (access(ld_so, F_OK) != 0) snprintf(ld_so, sizeof(ld_so), "%s/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3", g_cortex_root);
-#else
-    snprintf(ld_so, sizeof(ld_so), "%s/lib64/ld-linux-x86-64.so.2", g_cortex_root);
-#endif
-
     int is_elf = 0;
     if (g_cortex_root[0] != '\0' && strncmp(target, g_cortex_root, strlen(g_cortex_root)) == 0) {
         int fd = open(target, O_RDONLY);
@@ -2687,6 +2741,9 @@ int posix_spawn(pid_t *pid, const char *path,
         }
     }
 
+    char ld_so[PATH_MAX] = {0};
+    int has_ld_so = (is_elf && g_cortex_root[0] != '\0') ? find_dynamic_linker(g_cortex_root, target, ld_so, sizeof(ld_so)) : 0;
+
     if (target && target[0] != '\0') {
         setenv("CORTEX_REAL_EXE", target, 1);
     }
@@ -2694,7 +2751,7 @@ int posix_spawn(pid_t *pid, const char *path,
     char **new_envp = prepare_cortex_env(envp ? envp : environ, target);
 
     int ret = -1;
-    if (is_elf && access(ld_so, F_OK) == 0 && strcmp(target, ld_so) != 0) {
+    if (is_elf && has_ld_so && strcmp(target, ld_so) != 0) {
         chmod(ld_so, 0755);
         chmod(target, 0755);
 
