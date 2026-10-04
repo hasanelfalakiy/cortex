@@ -270,8 +270,9 @@ class MainActivity : AppCompatActivity() {
             }
             try {
                 BootstrapManager.cleanupStaleSocketsAndLocks(root, homeDir)
+                BootstrapManager.cleanupAptArtifacts(root)
             } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "Startup cleanupStaleSocketsAndLocks failed", e)
+                android.util.Log.e("MainActivity", "Startup cleanup failed", e)
             }
         }
 

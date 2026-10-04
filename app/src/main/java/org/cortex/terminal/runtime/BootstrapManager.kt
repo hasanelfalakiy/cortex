@@ -1156,12 +1156,14 @@ object BootstrapManager {
                 "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
                 "Suites: noble noble-updates noble-backports\n" +
                 "Components: main restricted universe multiverse\n" +
-                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n" +
+                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" +
+                "Trusted: yes\n\n" +
                 "Types: deb\n" +
                 "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
                 "Suites: noble-security\n" +
                 "Components: main restricted universe multiverse\n" +
-                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" +
+                "Trusted: yes\n"
             )
             ubuntuSources.setReadable(true, false)
             try { android.system.Os.chmod(ubuntuSources.absolutePath, 420) } catch (e: Exception) {}
@@ -1373,7 +1375,7 @@ object BootstrapManager {
         }
     }
 
-    private fun cleanupAptArtifacts(root: File) {
+    fun cleanupAptArtifacts(root: File) {
         try {
             val debianSources = File(root, "etc/apt/sources.list.d/debian.sources")
             val ubuntuSources = File(root, "etc/apt/sources.list.d/ubuntu.sources")
@@ -1413,6 +1415,27 @@ object BootstrapManager {
             ).forEach { lockFile ->
                 if (lockFile.exists() && lockFile.length() == 0L) {
                     try { lockFile.delete() } catch (e: Exception) {}
+                }
+            }
+
+            // Clean any corrupted MergeList package lists missing the "Package:" header
+            val listsDir = File(root, "var/lib/apt/lists")
+            if (listsDir.exists() && listsDir.isDirectory) {
+                listsDir.listFiles()?.forEach { file ->
+                    if (file.isFile && file.name.endsWith("_Packages")) {
+                        try {
+                            val sample = file.inputStream().use {
+                                val buf = ByteArray(2048)
+                                val r = it.read(buf)
+                                if (r > 0) String(buf, 0, r) else ""
+                            }
+                            if (!sample.contains("Package:")) {
+                                file.delete()
+                            }
+                        } catch (e: Exception) {
+                            file.delete()
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
