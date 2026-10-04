@@ -2,31 +2,63 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/sessionItemRoot"
     android:layout_width="match_parent"
-    android:layout_height="56dp"
+    android:layout_height="wrap_content"
+    android:minHeight="56dp"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:paddingStart="20dp"
-    android:paddingEnd="16dp"
-    android:background="?attr/selectableItemBackground">
+    android:layout_marginStart="10dp"
+    android:layout_marginEnd="10dp"
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="4dp"
+    android:paddingStart="14dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp"
+    android:background="@drawable/session_item_inactive_bg">
 
-    <TextView
-        android:id="@+id/sessionLabelText"
+    <!-- Active Indicator Pill -->
+    <View
+        android:id="@+id/sessionActiveIndicator"
+        android:layout_width="4dp"
+        android:layout_height="24dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/key_button_active"
+        android:visibility="gone" />
+
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:text="[1]"
-        android:textColor="#ffffff"
-        android:textSize="18sp"
-        android:textStyle="bold" />
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/sessionLabelText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Session 1"
+            android:textColor="@color/cortex_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/sessionStatusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:text="Connected"
+            android:textColor="@color/cortex_text_secondary"
+            android:textSize="12sp" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/btnSessionClose"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
+        android:layout_width="34dp"
+        android:layout_height="34dp"
         android:gravity="center"
-        android:text="×"
-        android:textColor="#f38ba8"
-        android:textSize="26sp"
-        android:background="?attr/selectableItemBackgroundBorderless" />
+        android:text="✕"
+        android:textColor="@color/cortex_accent"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:background="@drawable/icon_circle_bg" />
 
 </LinearLayout>

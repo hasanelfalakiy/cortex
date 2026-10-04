@@ -1,9 +1,33 @@
 <resources>
-    <color name="cortex_bg">#181825</color>
-    <color name="cortex_surface">#1e1e2e</color>
-    <color name="cortex_bar">#11111b</color>
-    <color name="cortex_fg">#cdd6f4</color>
+    <!-- Backgrounds & Surfaces (Material 3 Dark / Catppuccin Mocha) -->
+    <color name="cortex_bg">#12131a</color>
+    <color name="cortex_surface">#1a1b26</color>
+    <color name="cortex_surface_variant">#24273a</color>
+    <color name="cortex_surface_container">#161722</color>
+    <color name="cortex_surface_elevated">#252839</color>
+    <color name="cortex_bar">#12131a</color>
+
+    <!-- Material 3 Accent Roles -->
     <color name="cortex_primary">#89b4fa</color>
+    <color name="cortex_primary_container">#253556</color>
+    <color name="cortex_on_primary_container">#cdd6f4</color>
     <color name="cortex_secondary">#a6e3a1</color>
     <color name="cortex_accent">#f38ba8</color>
+    <color name="cortex_accent_bg">#3d2530</color>
+
+    <!-- Outlines & Borders -->
+    <color name="cortex_outline">#363a4f</color>
+    <color name="cortex_outline_variant">#242738</color>
+
+    <!-- Virtual Keyboard Keys -->
+    <color name="cortex_key_bg">#1e2030</color>
+    <color name="cortex_key_pressed">#363a4f</color>
+    <color name="cortex_key_active">#89b4fa</color>
+    <color name="cortex_key_active_text">#12131a</color>
+
+    <!-- Typography -->
+    <color name="cortex_fg">#cdd6f4</color>
+    <color name="cortex_text_primary">#f5f5f7</color>
+    <color name="cortex_text_secondary">#a6adc8</color>
+    <color name="cortex_text_muted">#6c7086</color>
 </resources>

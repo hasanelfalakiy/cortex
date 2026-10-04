@@ -2521,21 +2521,32 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
                                     char *rw = (char *)malloc(PATH_MAX);
                                     if (rw) {
                                         rewrite_path(cur_arg, rw, PATH_MAX);
-                                        new_argv[nidx++] = rw;
+                                        if (access(rw, R_OK) == 0) {
+                                            new_argv[nidx++] = rw;
+                                        } else {
+                                            free(rw);
+                                            if (nidx > 0 && strcmp(new_argv[nidx - 1], "--keyring") == 0) {
+                                                nidx--;
+                                            }
+                                        }
                                         continue;
                                     }
                                 } else if (strncmp(cur_arg, "--keyring=", 10) == 0 && cur_arg[10] == '/') {
-                                    char *rw = (char *)malloc(PATH_MAX + 16);
-                                    if (rw) {
-                                        char path_rw[PATH_MAX];
-                                        rewrite_path(cur_arg + 10, path_rw, PATH_MAX);
-                                        snprintf(rw, PATH_MAX + 16, "--keyring=%s", path_rw);
-                                        new_argv[nidx++] = rw;
+                                    char path_rw[PATH_MAX];
+                                    rewrite_path(cur_arg + 10, path_rw, PATH_MAX);
+                                    if (access(path_rw, R_OK) == 0) {
+                                        char *rw = (char *)malloc(PATH_MAX + 16);
+                                        if (rw) {
+                                            snprintf(rw, PATH_MAX + 16, "--keyring=%s", path_rw);
+                                            new_argv[nidx++] = rw;
+                                            continue;
+                                        }
+                                    } else {
                                         continue;
                                     }
                                 }
                             }
-                            new_argv[nidx++] = argv[i];
+                            new_argv[nidx++] = (char *)cur_arg;
                         }
                         new_argv[nidx] = NULL;
                         return orig_execve(ld_so, new_argv, prepare_cortex_env(envp, target));
@@ -2887,21 +2898,32 @@ int posix_spawn(pid_t *pid, const char *path,
                         char *rw = (char *)malloc(PATH_MAX);
                         if (rw) {
                             rewrite_path(cur_arg, rw, PATH_MAX);
-                            new_argv[nidx++] = rw;
+                            if (access(rw, R_OK) == 0) {
+                                new_argv[nidx++] = rw;
+                            } else {
+                                free(rw);
+                                if (nidx > 0 && strcmp(new_argv[nidx - 1], "--keyring") == 0) {
+                                    nidx--;
+                                }
+                            }
                             continue;
                         }
                     } else if (strncmp(cur_arg, "--keyring=", 10) == 0 && cur_arg[10] == '/') {
-                        char *rw = (char *)malloc(PATH_MAX + 16);
-                        if (rw) {
-                            char path_rw[PATH_MAX];
-                            rewrite_path(cur_arg + 10, path_rw, PATH_MAX);
-                            snprintf(rw, PATH_MAX + 16, "--keyring=%s", path_rw);
-                            new_argv[nidx++] = rw;
+                        char path_rw[PATH_MAX];
+                        rewrite_path(cur_arg + 10, path_rw, PATH_MAX);
+                        if (access(path_rw, R_OK) == 0) {
+                            char *rw = (char *)malloc(PATH_MAX + 16);
+                            if (rw) {
+                                snprintf(rw, PATH_MAX + 16, "--keyring=%s", path_rw);
+                                new_argv[nidx++] = rw;
+                                continue;
+                            }
+                        } else {
                             continue;
                         }
                     }
                 }
-                new_argv[nidx++] = argv[i];
+                new_argv[nidx++] = (char *)cur_arg;
             }
             new_argv[nidx] = NULL;
 

@@ -48,7 +48,9 @@ class ExtraKeysView @JvmOverloads constructor(
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(Color.parseColor("#000000"))
+        setBackgroundColor(Color.parseColor("#161722"))
+        val pad = (2 * resources.displayMetrics.density).toInt()
+        setPadding(pad, pad, pad, pad)
         buildLayout()
     }
 
@@ -216,20 +218,20 @@ class ExtraKeysView @JvmOverloads constructor(
         ctrlButton?.let { btn ->
             if (view.isCtrlPressed) {
                 btn.setBackgroundResource(R.drawable.key_button_active)
-                btn.setTextColor(Color.parseColor("#181825"))
+                btn.setTextColor(Color.parseColor("#12131a"))
             } else {
                 btn.setBackgroundResource(R.drawable.key_button_bg)
-                btn.setTextColor(Color.parseColor("#ffffff"))
+                btn.setTextColor(Color.parseColor("#f5f5f7"))
             }
         }
 
         altButton?.let { btn ->
             if (view.isAltPressed) {
                 btn.setBackgroundResource(R.drawable.key_button_active)
-                btn.setTextColor(Color.parseColor("#181825"))
+                btn.setTextColor(Color.parseColor("#12131a"))
             } else {
                 btn.setBackgroundResource(R.drawable.key_button_bg)
-                btn.setTextColor(Color.parseColor("#ffffff"))
+                btn.setTextColor(Color.parseColor("#f5f5f7"))
             }
         }
     }

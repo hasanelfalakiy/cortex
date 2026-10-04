@@ -39,7 +39,7 @@ class TerminalSearchBar @JvmOverloads constructor(
     init {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setBackgroundColor(Color.parseColor("#11111b"))
+        setBackgroundColor(Color.parseColor("#161722"))
         val pad = (6 * resources.displayMetrics.density).toInt()
         val horizPad = (10 * resources.displayMetrics.density).toInt()
         setPadding(horizPad, pad, horizPad, pad)
@@ -50,14 +50,14 @@ class TerminalSearchBar @JvmOverloads constructor(
             layoutParams = LayoutParams(0, inputHeight, 1f).apply {
                 marginEnd = (8 * resources.displayMetrics.density).toInt()
             }
-            setBackgroundResource(R.drawable.key_button_bg)
+            setBackgroundResource(R.drawable.search_bar_bg)
             setTextColor(Color.WHITE)
             setHintTextColor(Color.parseColor("#6c7086"))
             hint = "Search terminal…"
             textSize = 14f
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_SEARCH
-            val inputPad = (10 * resources.displayMetrics.density).toInt()
+            val inputPad = (14 * resources.displayMetrics.density).toInt()
             setPadding(inputPad, 0, inputPad, 0)
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -77,7 +77,7 @@ class TerminalSearchBar @JvmOverloads constructor(
 
         countText = TextView(context).apply {
             layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = (6 * resources.displayMetrics.density).toInt()
+                marginEnd = (8 * resources.displayMetrics.density).toInt()
             }
             setTextColor(Color.parseColor("#a6adc8"))
             textSize = 12f
@@ -85,13 +85,13 @@ class TerminalSearchBar @JvmOverloads constructor(
         }
         addView(countText)
 
-        val btnSize = (38 * resources.displayMetrics.density).toInt()
+        val btnSize = (36 * resources.displayMetrics.density).toInt()
         val btnPrev = ImageButton(context).apply {
             layoutParams = LayoutParams(btnSize, btnSize).apply {
                 marginEnd = (4 * resources.displayMetrics.density).toInt()
             }
             setImageResource(android.R.drawable.arrow_up_float)
-            setBackgroundResource(R.drawable.key_button_bg)
+            setBackgroundResource(R.drawable.icon_circle_bg)
             contentDescription = "Previous match"
             setColorFilter(Color.WHITE)
             setOnClickListener { onPrev?.invoke() }
@@ -103,7 +103,7 @@ class TerminalSearchBar @JvmOverloads constructor(
                 marginEnd = (4 * resources.displayMetrics.density).toInt()
             }
             setImageResource(android.R.drawable.arrow_down_float)
-            setBackgroundResource(R.drawable.key_button_bg)
+            setBackgroundResource(R.drawable.icon_circle_bg)
             contentDescription = "Next match"
             setColorFilter(Color.WHITE)
             setOnClickListener { onNext?.invoke() }
@@ -113,7 +113,7 @@ class TerminalSearchBar @JvmOverloads constructor(
         val btnClose = ImageButton(context).apply {
             layoutParams = LayoutParams(btnSize, btnSize)
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
-            setBackgroundResource(R.drawable.key_button_bg)
+            setBackgroundResource(R.drawable.icon_circle_bg)
             contentDescription = "Close search"
             setColorFilter(Color.WHITE)
             setOnClickListener {

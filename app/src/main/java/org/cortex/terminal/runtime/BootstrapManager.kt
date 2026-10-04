@@ -81,7 +81,10 @@ object BootstrapManager {
                     "alias cls='clear'\n"
                 changed = true
             }
-            if (!bashrcText.contains(".local/bin")) {
+            if (!bashrcText.contains(".opencode/bin")) {
+                bashrcText += "export PATH=\"" + d + "HOME/.opencode/bin:" + d + "HOME/.local/bin:" + d + "PATH\"\n"
+                changed = true
+            } else if (!bashrcText.contains(".local/bin")) {
                 bashrcText += "export PATH=\"" + d + "HOME/.local/bin:" + d + "PATH\"\n"
                 changed = true
             }
@@ -987,7 +990,7 @@ object BootstrapManager {
                 "Acquire::AllowDowngradeToInsecureRepositories \"true\";\n" +
                 "APT::Get::AllowUnauthenticated \"true\";\n" +
                 "Dir::Etc::trusted \"/usr/share/keyrings/ubuntu-archive-keyring.gpg\";\n" +
-                "Dir::Etc::trustedparts \"/etc/apt/trusted.gpg.d\";\n" +
+                "Dir::Etc::trustedparts \"\";\n" +
                 "Dir::dpkg::cputable \"/usr/share/dpkg/cputable\";\n" +
                 "Dir::dpkg::tupletable \"/usr/share/dpkg/tupletable\";\n" +
                 "Dir::dpkg::triplettable \"/usr/share/dpkg/triplettable\";\n" +
@@ -1624,7 +1627,16 @@ object BootstrapManager {
                 }
             }
 
-            // Copy secondary keyrings from assets if available
+            // Clean up any obsolete/corrupted keyrings from trusted.gpg.d that trigger gpgv add_keyblock_resource errors
+            try {
+                trustedD.listFiles()?.forEach { file ->
+                    if (!containsKeyId(file)) {
+                        file.delete()
+                    }
+                }
+            } catch (e: Exception) {}
+
+            // Copy secondary keyrings from assets if available to usr/share/keyrings and etc/apt/keyrings
             if (context != null) {
                 val assetKeyrings = listOf(
                     "ubuntu-master-keyring.gpg",
@@ -1634,11 +1646,7 @@ object BootstrapManager {
                 )
                 for (name in assetKeyrings) {
                     try {
-                        val targets = if (name.contains("2012")) {
-                            listOf(File(trustedD, name), File(shareKeyrings, name))
-                        } else {
-                            listOf(File(shareKeyrings, name), File(aptKeyrings, name))
-                        }
+                        val targets = listOf(File(shareKeyrings, name), File(aptKeyrings, name))
                         context.assets.open(name).use { inStream ->
                             val bytes = inStream.readBytes()
                             if (bytes.isNotEmpty()) {
@@ -1941,15 +1949,43 @@ object BootstrapManager {
                 "        exec \"\$cand\" \"\$@\"\n" +
                 "    fi\n" +
                 "done\n" +
-                "if command -v npm >/dev/null 2>&1; then\n" +
-                "    npm_bin=\"\$(npm root -g 2>/dev/null)/opencode-ai/bin/opencode\"\n" +
-                "    if [ -x \"\$npm_bin\" ]; then\n" +
-                "        exec \"\$npm_bin\" \"\$@\"\n" +
+                "echo \"==========================================================\"\n" +
+                "echo \" OpenCode CLI is not yet installed.\"\n" +
+                "echo \" Installing OpenCode CLI (high-speed native installer)...\"\n" +
+                "echo \"==========================================================\"\n" +
+                "ARCH=\"\$(uname -m)\"\n" +
+                "case \"\$ARCH\" in\n" +
+                "    aarch64|arm64) TARGET_ARCH=\"linux-arm64\" ;;\n" +
+                "    x86_64|amd64) TARGET_ARCH=\"linux-x64\" ;;\n" +
+                "    *) TARGET_ARCH=\"linux-arm64\" ;;\n" +
+                "esac\n" +
+                "INSTALL_DIR=\"\$HOME/.opencode/bin\"\n" +
+                "mkdir -p \"\$INSTALL_DIR\"\n" +
+                "TMP_DIR=\"\${TMPDIR:-/tmp}/opencode_setup_\$\$\"\n" +
+                "mkdir -p \"\$TMP_DIR\"\n" +
+                "VERSION=\"0.0.0-beta-17236\"\n" +
+                "META=\"\$(curl -sSL --max-time 6 https://opencode.ai/update/api/latest/cli/npm 2>/dev/null || true)\"\n" +
+                "V_CAND=\"\$(echo \"\$META\" | sed -n 's/.*\"version\":\"\\([^\"]*\\)\".*/\\1/p')\"\n" +
+                "if [ -n \"\$V_CAND\" ]; then VERSION=\"\$V_CAND\"; fi\n" +
+                "echo \"Downloading OpenCode CLI v\$VERSION for \$TARGET_ARCH...\"\n" +
+                "TAR_URL=\"https://registry.npmjs.org/@opencode/cli-\$TARGET_ARCH/-/cli-\$TARGET_ARCH-\$VERSION.tgz\"\n" +
+                "if ! curl -# -L -f -o \"\$TMP_DIR/opencode.tgz\" \"\$TAR_URL\"; then\n" +
+                "    echo \"Fallback to alternate registry URL...\"\n" +
+                "    curl -# -L -f -o \"\$TMP_DIR/opencode.tgz\" \"https://registry.npmjs.org/@opencode-ai/cli-\$TARGET_ARCH/-/cli-\$TARGET_ARCH-\$VERSION.tgz\" || true\n" +
+                "fi\n" +
+                "if [ -f \"\$TMP_DIR/opencode.tgz\" ] && [ -s \"\$TMP_DIR/opencode.tgz\" ]; then\n" +
+                "    tar -xzf \"\$TMP_DIR/opencode.tgz\" -C \"\$TMP_DIR\"\n" +
+                "    if [ -f \"\$TMP_DIR/package/bin/opencode\" ]; then\n" +
+                "        mv -f \"\$TMP_DIR/package/bin/opencode\" \"\$INSTALL_DIR/opencode\"\n" +
+                "        chmod 755 \"\$INSTALL_DIR/opencode\"\n" +
+                "        rm -rf \"\$TMP_DIR\"\n" +
+                "        echo \"OpenCode CLI installed successfully!\"\n" +
+                "        exec \"\$INSTALL_DIR/opencode\" \"\$@\"\n" +
                 "    fi\n" +
                 "fi\n" +
-                "echo \"OpenCode CLI is not yet installed.\"\n" +
-                "echo \"Installing OpenCode CLI via https://opencode.ai/install...\"\n" +
-                "curl -fsSL https://opencode.ai/install | bash\n" +
+                "rm -rf \"\$TMP_DIR\"\n" +
+                "echo \"Direct install failed, trying fallback installer...\"\n" +
+                "curl -f -# -L https://opencode.ai/v2/install | bash -s -- --no-modify-path 2>/dev/null || true\n" +
                 "for cand in \"\$HOME/.opencode/bin/opencode\" \"/home/.opencode/bin/opencode\" \"\$HOME/.local/bin/opencode\" \"/home/.local/bin/opencode\"; do\n" +
                 "    if [ -x \"\$cand\" ]; then\n" +
                 "        exec \"\$cand\" \"\$@\"\n" +
@@ -1971,28 +2007,44 @@ object BootstrapManager {
             usrLocalBin.mkdirs()
             val muse = File(usrLocalBin, "muse")
             val museScript = "#!/bin/bash\n" +
-                "if [ -x \"\$HOME/.local/bin/muse\" ]; then\n" +
-                "    exec \"\$HOME/.local/bin/muse\" \"\$@\"\n" +
-                "fi\n" +
+                "for cand in \"\$HOME/.local/bin/muse\" \"/home/.local/bin/muse\"; do\n" +
+                "    if [ -x \"\$cand\" ]; then\n" +
+                "        exec \"\$cand\" \"\$@\"\n" +
+                "    fi\n" +
+                "done\n" +
                 "for cand in \"\$HOME/.local/bin/muse-bin-\"* \"/home/.local/bin/muse-bin-\"*; do\n" +
                 "    if [ -x \"\$cand\" ]; then\n" +
                 "        exec \"\$cand\" \"\$@\"\n" +
                 "    fi\n" +
                 "done\n" +
-                "if [ -x \"/home/.local/bin/muse\" ]; then\n" +
-                "    exec \"/home/.local/bin/muse\" \"\$@\"\n" +
-                "fi\n" +
-                "echo \"Meta Muse Code CLI is not yet installed.\"\n" +
-                "echo \"Installing Meta Muse Code CLI via https://dev.meta.ai/install.sh...\"\n" +
-                "curl -fsSL https://dev.meta.ai/install.sh | bash\n" +
-                "if [ -x \"\$HOME/.local/bin/muse\" ]; then\n" +
-                "    exec \"\$HOME/.local/bin/muse\" \"\$@\"\n" +
-                "fi\n" +
+                "echo \"==========================================================\"\n" +
+                "echo \" Meta Muse Code CLI is not yet installed.\"\n" +
+                "echo \" Installing Meta Muse Code CLI...\"\n" +
+                "echo \"==========================================================\"\n" +
+                "mkdir -p \"\$HOME/.local/bin\"\n" +
+                "curl -fsSL https://dev.meta.ai/install.sh 2>/dev/null | bash 2>/dev/null || true\n" +
+                "for cand in \"\$HOME/.local/bin/muse\" \"/home/.local/bin/muse\"; do\n" +
+                "    if [ -x \"\$cand\" ]; then\n" +
+                "        exec \"\$cand\" \"\$@\"\n" +
+                "    fi\n" +
+                "done\n" +
                 "for cand in \"\$HOME/.local/bin/muse-bin-\"* \"/home/.local/bin/muse-bin-\"*; do\n" +
                 "    if [ -x \"\$cand\" ]; then\n" +
                 "        exec \"\$cand\" \"\$@\"\n" +
                 "    fi\n" +
                 "done\n" +
+                "echo \"Installing official Meta Muse Code binary via direct CDN mirror...\"\n" +
+                "MUSE_VER=\"1.4.2-R4684.1\"\n" +
+                "MUSE_URL=\"https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=\$MUSE_VER&file=muse-aarch64-linux\"\n" +
+                "MUSE_BIN=\"\$HOME/.local/bin/muse-bin-\$MUSE_VER\"\n" +
+                "if curl -# -L -f -o \"\$MUSE_BIN\" \"\$MUSE_URL\"; then\n" +
+                "    chmod 755 \"\$MUSE_BIN\"\n" +
+                "    echo \"\$MUSE_VER\" > \"\$HOME/.local/bin/.muse-version\"\n" +
+                "    ln -sf \"muse-bin-\$MUSE_VER\" \"\$HOME/.local/bin/muse\"\n" +
+                "    echo \"Meta Muse Code CLI v\$MUSE_VER installed successfully!\"\n" +
+                "    exec \"\$MUSE_BIN\" \"\$@\"\n" +
+                "fi\n" +
+                "echo \"Failed to install Muse Code CLI. Please check internet connection.\"\n" +
                 "exit 127\n"
             muse.writeText(museScript)
             muse.setExecutable(true, false)

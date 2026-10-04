@@ -116,14 +116,11 @@ jobs:
           if [ -d /usr/share/keyrings ]; then
             cp -r /usr/share/keyrings/* extra-rootfs/usr/share/keyrings/ 2>/dev/null || true
           fi
-          if [ -d /etc/apt/trusted.gpg.d ]; then
-            cp -r /etc/apt/trusted.gpg.d/* extra-rootfs/etc/apt/trusted.gpg.d/ 2>/dev/null || true
-          fi
           cp app/src/main/assets/*.gpg extra-rootfs/usr/share/keyrings/ 2>/dev/null || true
-          cp app/src/main/assets/*.gpg extra-rootfs/etc/apt/trusted.gpg.d/ 2>/dev/null || true
           if [ -f extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg ]; then
             cp extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg extra-rootfs/etc/apt/keyrings/ubuntu-archive-keyring.gpg 2>/dev/null || true
             cp extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg extra-rootfs/etc/apt/trusted.gpg 2>/dev/null || true
+            cp extra-rootfs/usr/share/keyrings/ubuntu-archive-keyring.gpg extra-rootfs/etc/apt/trusted.gpg.d/ubuntu-archive-keyring.gpg 2>/dev/null || true
           fi
           if [ -d /usr/share/dpkg ]; then
             cp -r /usr/share/dpkg/* extra-rootfs/usr/share/dpkg/
@@ -132,7 +129,7 @@ jobs:
             mkdir -p extra-rootfs/usr/share
             cp -r /usr/share/zoneinfo extra-rootfs/usr/share/
           fi
-          printf 'APT::Sandbox::User "root";\nAPT::Sandbox::Seccomp "false";\nAcquire::ForceIPv4 "true";\nAcquire::Connect::AddrConfig "false";\nAcquire::SRV "false";\nAcquire::Languages "none";\nAcquire::GzipIndexes "true";\nAcquire::AllowInsecureRepositories "true";\nAcquire::AllowDowngradeToInsecureRepositories "true";\nAPT::Get::AllowUnauthenticated "true";\nDir::dpkg::cputable "/usr/share/dpkg/cputable";\nDir::dpkg::tupletable "/usr/share/dpkg/tupletable";\nDir::dpkg::triplettable "/usr/share/dpkg/triplettable";\nDir::Etc::trusted "/usr/share/keyrings/ubuntu-archive-keyring.gpg";\nDir::Etc::trustedparts "/etc/apt/trusted.gpg.d";\nDPkg::Install::Recursive "false";\nDpkg::Progress-Fancy "false";\nAPT::Color "false";\nDPkg::Options {\n   "--force-confdef";\n   "--force-confold";\n   "--force-unsafe-io";\n};\n' > extra-rootfs/etc/apt/apt.conf.d/01sandbox
+          printf 'APT::Sandbox::User "root";\nAPT::Sandbox::Seccomp "false";\nAcquire::ForceIPv4 "true";\nAcquire::Connect::AddrConfig "false";\nAcquire::SRV "false";\nAcquire::Languages "none";\nAcquire::GzipIndexes "true";\nAcquire::AllowInsecureRepositories "true";\nAcquire::AllowDowngradeToInsecureRepositories "true";\nAPT::Get::AllowUnauthenticated "true";\nDir::dpkg::cputable "/usr/share/dpkg/cputable";\nDir::dpkg::tupletable "/usr/share/dpkg/tupletable";\nDir::dpkg::triplettable "/usr/share/dpkg/triplettable";\nDir::Etc::trusted "/usr/share/keyrings/ubuntu-archive-keyring.gpg";\nDir::Etc::trustedparts "";\nDPkg::Install::Recursive "false";\nDpkg::Progress-Fancy "false";\nAPT::Color "false";\nDPkg::Options {\n   "--force-confdef";\n   "--force-confold";\n   "--force-unsafe-io";\n};\n' > extra-rootfs/etc/apt/apt.conf.d/01sandbox
           mkdir -p extra-rootfs/etc/apt/sources.list.d
           rm -f extra-rootfs/etc/apt/sources.list
           printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: noble noble-updates noble-backports\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\nTrusted: yes\n\nTypes: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: noble-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\nTrusted: yes\n' > extra-rootfs/etc/apt/sources.list.d/ubuntu.sources
@@ -332,7 +329,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.75"
+          VERSION="v1.24.76"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -343,16 +340,25 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.75 — Package Installation Fix (systemd & OpenJDK-17) & Multiarch Systemd Library Paths
+          ### Cortex Release v1.24.76 — Material 3 UI Redesign, Zero-Warning APT Update & Resilient OpenCode / Muse Launchers
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.75:
-          - **Package Installation Fix (systemd / OpenJDK-17 / Issue #3)**:
-            - Resolved `systemd-machine-id-setup: cannot open shared object file: libsystemd-shared-255.so` which previously blocked `systemd.postinst` and interrupted installations of packages like `openjdk-17-jdk`, `default-jre`, `avahi`, `dbus`, and other core utilities.
-            - Added multiarch systemd private library directories (`/usr/lib/aarch64-linux-gnu/systemd`, `/lib/aarch64-linux-gnu/systemd`, `/usr/lib/arm-linux-gnueabihf/systemd`, `/lib/arm-linux-gnueabihf/systemd`) to global `LD_LIBRARY_PATH` across Android runtime, `cortex-hook.c`, `BootstrapManager.kt`, and profile scripts.
-            - Established persistent `dpkg-divert` rules for `/usr/bin/systemd-machine-id-setup`, `/bin/systemd-machine-id-setup`, and `/usr/sbin/systemd-machine-id-setup` ensuring package updates never overwrite safe exit-0 shims.
-            - Hardened `cortex-hook.c` `execve` and `posix_spawn` hooks to intercept `systemd-machine-id-setup`, `ldconfig`, `start-stop-daemon`, and `policy-rc.d` whether invoked via absolute path, relative path, or basename.
+          #### What's New in v1.24.76:
+          - **Modern Material 3 Frontend & Smooth UX**:
+            - Complete Material 3 dark surface & tonal elevation palette (Catppuccin Mocha / Material 3 dark theme).
+            - Redesigned soft rounded pill/squircle virtual key toolbar (10dp corners with subtle stroke, high contrast active modifiers).
+            - Upgraded Material 3 capsule pill search bar (24dp rounded shape) with smooth slide animations.
+            - Redesigned Material 3 Navigation Drawer with rounded container (24dp), session cards with active indicators, and filled tonal action buttons.
+            - Material 3 rounded progress update dialog with smooth progress indicators.
+          - **Clean Zero-Warning APT Update**:
+            - Completely resolved `W: GPG error: ... GPG: add_keyblock_resource 33587281` by directing `gpgv` exclusively to the verified archive keyring and disabling deprecated `trustedparts`.
+            - `cortex-hook.c` dynamically filters non-existent or inaccessible keyrings during `gpgv` execution in both `execve` and `posix_spawn`.
+            - Cleaned up obsolete CD image keyrings from `/etc/apt/trusted.gpg.d`.
+          - **High-Speed OpenCode & Meta Muse Code Launchers**:
+            - Replaced slow trace-pipe installer for `opencode` with a high-speed direct native downloader that fetches and unpacks precompiled binaries in seconds with native curl progress.
+            - Added resilient direct CDN fallback for Meta Muse Code (`muse`) to ensure installation succeeds even if regional network restrictions or captive portals interfere with Meta's channel API.
+            - Guaranteed `$HOME/.opencode/bin` and `$HOME/.local/bin` are always in global interactive shell `PATH`.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)
@@ -365,4 +371,5 @@ jobs:
             release-apks/Cortex-arm64-v8a-signed.apk \
             release-apks/Cortex-armeabi-v7a-signed.apk \
             --title "Cortex Release $VERSION" \
-            --notes-file release-notes.md
+            --notes-file release-notes.md \
+            --clobber
