@@ -18,18 +18,26 @@
             android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <!-- Terminal Search Bar (hidden by default, revealed via FIND key or toolbar swipe) -->
-        <org.cortex.terminal.view.TerminalSearchBar
-            android:id="@+id/searchBar"
+        <!-- Bottom Bar: Virtual Keys Toolbar & Terminal Search Bar with Slide Animation -->
+        <FrameLayout
+            android:id="@+id/bottomBarContainer"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:visibility="gone" />
+            android:layout_height="76dp">
 
-        <!-- 2-Row Extra Keys Keyboard Toolbar -->
-        <org.cortex.terminal.view.ExtraKeysView
-            android:id="@+id/extraKeysView"
-            android:layout_width="match_parent"
-            android:layout_height="76dp" />
+            <!-- 2-Row Extra Keys Keyboard Toolbar -->
+            <org.cortex.terminal.view.ExtraKeysView
+                android:id="@+id/extraKeysView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <!-- Terminal Search Bar (slides in from right over/replacing extra keys) -->
+            <org.cortex.terminal.view.TerminalSearchBar
+                android:id="@+id/searchBar"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
+        </FrameLayout>
 
     </LinearLayout>
 

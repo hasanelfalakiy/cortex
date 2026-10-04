@@ -598,7 +598,7 @@ int creat(const char *pathname, mode_t mode) {
     return open(pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
 }
 
-// Fortified open variants used by GNU tar and other coreutils compiled with _FORTIFY_SOURCE=2
+// Fortified open variants used by GNU tar and other coreutils compiled with _FORTIFY_SOURCE=2/3
 int __open_2(const char *pathname, int flags) {
     return open(pathname, flags);
 }
@@ -606,6 +606,38 @@ int __open_2(const char *pathname, int flags) {
 int __openat_2(int dirfd, const char *pathname, int flags) {
     return openat(dirfd, pathname, flags);
 }
+
+int __open64_2(const char *pathname, int flags) {
+    return open(pathname, flags);
+}
+
+int __openat64_2(int dirfd, const char *pathname, int flags) {
+    return openat(dirfd, pathname, flags);
+}
+
+#if !defined(__LP64__)
+int open64(const char *pathname, int flags, ...) {
+    if (open_needs_mode(flags)) {
+        va_list args;
+        va_start(args, flags);
+        mode_t mode = va_arg(args, mode_t);
+        va_end(args);
+        return open(pathname, flags, mode);
+    }
+    return open(pathname, flags);
+}
+
+int openat64(int dirfd, const char *pathname, int flags, ...) {
+    if (open_needs_mode(flags)) {
+        va_list args;
+        va_start(args, flags);
+        mode_t mode = va_arg(args, mode_t);
+        va_end(args);
+        return openat(dirfd, pathname, flags, mode);
+    }
+    return openat(dirfd, pathname, flags);
+}
+#endif
 
 
 // Hook fopen
@@ -2385,6 +2417,51 @@ static int find_dynamic_linker(const char *cortex_root, const char *cmd, char *o
     return 0;
 }
 
+static int has_pt_interp(const char *path) {
+    if (!path || path[0] == '\0') return 0;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    unsigned char ehdr[64];
+    ssize_t n = read(fd, ehdr, sizeof(ehdr));
+    if (n < 52 || ehdr[0] != 0x7f || ehdr[1] != 'E' || ehdr[2] != 'L' || ehdr[3] != 'F') {
+        close(fd);
+        return 0;
+    }
+    int is_64 = (ehdr[4] == 2);
+    uint64_t phoff = 0;
+    uint16_t phentsize = 0;
+    uint16_t phnum = 0;
+    if (is_64) {
+        if (n < 64) { close(fd); return 0; }
+        phoff = *(uint64_t *)(ehdr + 32);
+        phentsize = *(uint16_t *)(ehdr + 54);
+        phnum = *(uint16_t *)(ehdr + 56);
+    } else {
+        phoff = *(uint32_t *)(ehdr + 28);
+        phentsize = *(uint16_t *)(ehdr + 42);
+        phnum = *(uint16_t *)(ehdr + 44);
+    }
+    if (phoff == 0 || phentsize == 0 || phnum == 0) {
+        close(fd);
+        return 0;
+    }
+    if (lseek(fd, (off_t)phoff, SEEK_SET) < 0) {
+        close(fd);
+        return 0;
+    }
+    for (int i = 0; i < phnum && i < 128; i++) {
+        uint32_t p_type = 0;
+        if (read(fd, &p_type, sizeof(p_type)) != sizeof(p_type)) break;
+        if (p_type == 3 /* PT_INTERP */) {
+            close(fd);
+            return 1;
+        }
+        if (lseek(fd, (off_t)(phentsize - sizeof(p_type)), SEEK_CUR) < 0) break;
+    }
+    close(fd);
+    return 0;
+}
+
 // Hook execve
 typedef int (*orig_execve_f_type)(const char *filename, char *const argv[], char *const envp[]);
 int execve(const char *filename, char *const argv[], char *const envp[]) {
@@ -2418,37 +2495,74 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
             ssize_t n = read(fd, hdr, sizeof(hdr) - 1);
             close(fd);
 
-            // 1. Transparently route glibc ELF binaries through ld.so
+            // 1. Transparently route dynamically linked glibc ELF binaries through ld.so
+            // Note: Statically linked binaries (PT_INTERP absent, e.g. Meta Muse Code) must execute directly!
             if (n >= 4 && (unsigned char)hdr[0] == 0x7f && hdr[1] == 'E' && hdr[2] == 'L' && hdr[3] == 'F') {
-                char ld_so[PATH_MAX] = {0};
-                if (find_dynamic_linker(g_cortex_root, target, ld_so, sizeof(ld_so)) && strcmp(target, ld_so) != 0) {
-                    chmod(ld_so, 0755);
-                    chmod(target, 0755);
+                int is_dynamic = has_pt_interp(target);
+                if (is_dynamic) {
+                    char ld_so[PATH_MAX] = {0};
+                    if (find_dynamic_linker(g_cortex_root, target, ld_so, sizeof(ld_so)) && strcmp(target, ld_so) != 0) {
+                        chmod(ld_so, 0755);
+                        chmod(target, 0755);
 
-                    strncpy(g_real_exe, target, sizeof(g_real_exe) - 1);
-                    g_real_exe[sizeof(g_real_exe) - 1] = '\0';
-                    setenv("CORTEX_REAL_EXE", target, 1);
+                        strncpy(g_real_exe, target, sizeof(g_real_exe) - 1);
+                        g_real_exe[sizeof(g_real_exe) - 1] = '\0';
+                        setenv("CORTEX_REAL_EXE", target, 1);
 
-                    char *const *arg_ptr = argv;
-                    int argc = 0;
-                    while (arg_ptr && *arg_ptr) {
-                        argc++;
-                        arg_ptr++;
+                        char *const *arg_ptr = argv;
+                        int argc = 0;
+                        while (arg_ptr && *arg_ptr) {
+                            argc++;
+                            arg_ptr++;
+                        }
+
+                        const char *prog_name = strrchr(target, '/');
+                        prog_name = (prog_name != NULL) ? prog_name + 1 : target;
+
+                        int is_gpgv = (strcmp(prog_name, "gpgv") == 0 || strcmp(prog_name, "gpgv.orig") == 0);
+
+                        char hook_so[PATH_MAX] = {0};
+                        snprintf(hook_so, sizeof(hook_so), "%s/usr/lib/libcortex-hook.so", g_cortex_root);
+                        if (access(hook_so, F_OK) != 0) {
+                            snprintf(hook_so, sizeof(hook_so), "%s/lib/libcortex-hook.so", g_cortex_root);
+                        }
+
+                        char **new_argv = (char **)calloc(argc + 8, sizeof(char *));
+                        int nidx = 0;
+                        new_argv[nidx++] = ld_so;
+                        if (hook_so[0] != '\0' && access(hook_so, F_OK) == 0) {
+                            new_argv[nidx++] = (char *)"--preload";
+                            new_argv[nidx++] = hook_so;
+                        }
+                        new_argv[nidx++] = (char *)"--argv0";
+                        new_argv[nidx++] = (char *)((argc > 0 && argv[0]) ? argv[0] : prog_name);
+                        new_argv[nidx++] = (char *)target;
+                        for (int i = 1; i < argc; i++) {
+                            const char *cur_arg = argv[i];
+                            if (is_gpgv && cur_arg) {
+                                if (cur_arg[0] == '/') {
+                                    char *rw = (char *)malloc(PATH_MAX);
+                                    if (rw) {
+                                        rewrite_path(cur_arg, rw, PATH_MAX);
+                                        new_argv[nidx++] = rw;
+                                        continue;
+                                    }
+                                } else if (strncmp(cur_arg, "--keyring=", 10) == 0 && cur_arg[10] == '/') {
+                                    char *rw = (char *)malloc(PATH_MAX + 16);
+                                    if (rw) {
+                                        char path_rw[PATH_MAX];
+                                        rewrite_path(cur_arg + 10, path_rw, PATH_MAX);
+                                        snprintf(rw, PATH_MAX + 16, "--keyring=%s", path_rw);
+                                        new_argv[nidx++] = rw;
+                                        continue;
+                                    }
+                                }
+                            }
+                            new_argv[nidx++] = argv[i];
+                        }
+                        new_argv[nidx] = NULL;
+                        return orig_execve(ld_so, new_argv, prepare_cortex_env(envp, target));
                     }
-
-                    const char *prog_name = strrchr(target, '/');
-                    prog_name = (prog_name != NULL) ? prog_name + 1 : target;
-
-                    char **new_argv = (char **)calloc(argc + 5, sizeof(char *));
-                    new_argv[0] = ld_so;
-                    new_argv[1] = (char *)"--argv0";
-                    new_argv[2] = (char *)((argc > 0 && argv[0]) ? argv[0] : prog_name);
-                    new_argv[3] = (char *)target;
-                    for (int i = 1; i < argc; i++) {
-                        new_argv[i + 3] = argv[i];
-                    }
-                    new_argv[argc + 3] = NULL;
-                    return orig_execve(ld_so, new_argv, prepare_cortex_env(envp, target));
                 }
             }
 
@@ -2729,6 +2843,7 @@ int posix_spawn(pid_t *pid, const char *path,
     }
 
     int is_elf = 0;
+    int is_dynamic = 0;
     if (g_cortex_root[0] != '\0' && strncmp(target, g_cortex_root, strlen(g_cortex_root)) == 0) {
         int fd = open(target, O_RDONLY);
         if (fd >= 0) {
@@ -2737,12 +2852,13 @@ int posix_spawn(pid_t *pid, const char *path,
             close(fd);
             if (n >= 4 && (unsigned char)hdr[0] == 0x7f && hdr[1] == 'E' && hdr[2] == 'L' && hdr[3] == 'F') {
                 is_elf = 1;
+                is_dynamic = has_pt_interp(target);
             }
         }
     }
 
     char ld_so[PATH_MAX] = {0};
-    int has_ld_so = (is_elf && g_cortex_root[0] != '\0') ? find_dynamic_linker(g_cortex_root, target, ld_so, sizeof(ld_so)) : 0;
+    int has_ld_so = (is_elf && is_dynamic && g_cortex_root[0] != '\0') ? find_dynamic_linker(g_cortex_root, target, ld_so, sizeof(ld_so)) : 0;
 
     if (target && target[0] != '\0') {
         setenv("CORTEX_REAL_EXE", target, 1);
@@ -2761,16 +2877,49 @@ int posix_spawn(pid_t *pid, const char *path,
         const char *prog_name = strrchr(target, '/');
         prog_name = (prog_name != NULL) ? prog_name + 1 : target;
 
-        char **new_argv = (char **)calloc(argc + 5, sizeof(char *));
+        int is_gpgv = (strcmp(prog_name, "gpgv") == 0 || strcmp(prog_name, "gpgv.orig") == 0);
+
+        char hook_so[PATH_MAX] = {0};
+        snprintf(hook_so, sizeof(hook_so), "%s/usr/lib/libcortex-hook.so", g_cortex_root);
+        if (access(hook_so, F_OK) != 0) {
+            snprintf(hook_so, sizeof(hook_so), "%s/lib/libcortex-hook.so", g_cortex_root);
+        }
+
+        char **new_argv = (char **)calloc(argc + 8, sizeof(char *));
         if (new_argv) {
-            new_argv[0] = ld_so;
-            new_argv[1] = (char *)"--argv0";
-            new_argv[2] = (char *)((argc > 0 && argv && argv[0]) ? argv[0] : prog_name);
-            new_argv[3] = (char *)target;
-            for (int i = 1; i < argc; i++) {
-                new_argv[i + 3] = argv[i];
+            int nidx = 0;
+            new_argv[nidx++] = ld_so;
+            if (hook_so[0] != '\0' && access(hook_so, F_OK) == 0) {
+                new_argv[nidx++] = (char *)"--preload";
+                new_argv[nidx++] = hook_so;
             }
-            new_argv[argc + 3] = NULL;
+            new_argv[nidx++] = (char *)"--argv0";
+            new_argv[nidx++] = (char *)((argc > 0 && argv && argv[0]) ? argv[0] : prog_name);
+            new_argv[nidx++] = (char *)target;
+            for (int i = 1; i < argc; i++) {
+                const char *cur_arg = argv[i];
+                if (is_gpgv && cur_arg) {
+                    if (cur_arg[0] == '/') {
+                        char *rw = (char *)malloc(PATH_MAX);
+                        if (rw) {
+                            rewrite_path(cur_arg, rw, PATH_MAX);
+                            new_argv[nidx++] = rw;
+                            continue;
+                        }
+                    } else if (strncmp(cur_arg, "--keyring=", 10) == 0 && cur_arg[10] == '/') {
+                        char *rw = (char *)malloc(PATH_MAX + 16);
+                        if (rw) {
+                            char path_rw[PATH_MAX];
+                            rewrite_path(cur_arg + 10, path_rw, PATH_MAX);
+                            snprintf(rw, PATH_MAX + 16, "--keyring=%s", path_rw);
+                            new_argv[nidx++] = rw;
+                            continue;
+                        }
+                    }
+                }
+                new_argv[nidx++] = argv[i];
+            }
+            new_argv[nidx] = NULL;
 
             if (orig_posix_spawn) {
                 ret = orig_posix_spawn(pid, ld_so, file_actions, attrp, new_argv, new_envp);

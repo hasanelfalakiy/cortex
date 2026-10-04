@@ -121,6 +121,7 @@ class ExtraKeysView @JvmOverloads constructor(
                                 try { action() } catch (_: Exception) {}
                             }
                             pendingKeyAction = runnable
+                            pendingKeyView = v
                             v.postDelayed(runnable, 55L)
                             true
                         }
@@ -161,11 +162,15 @@ class ExtraKeysView @JvmOverloads constructor(
         return rowLayout
     }
 
-    private fun cancelPendingKey(v: View) {
+    private var pendingKeyView: View? = null
+
+    private fun cancelPendingKey(v: View? = null) {
+        val target = v ?: pendingKeyView
         pendingKeyAction?.let { r ->
-            try { v.removeCallbacks(r) } catch (_: Exception) {}
+            try { target?.removeCallbacks(r) } catch (_: Exception) {}
         }
         pendingKeyAction = null
+        pendingKeyView = null
     }
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
@@ -181,8 +186,9 @@ class ExtraKeysView @JvmOverloads constructor(
                     val dy = kotlin.math.abs(ev.y - swipeDownY)
                     val density = resources.displayMetrics.density
                     // Right-to-left swipe across the toolbar opens terminal search
-                    if (dx < -60 * density && kotlin.math.abs(dx) > dy * 1.5f) {
+                    if (dx < -45 * density && kotlin.math.abs(dx) > dy * 1.3f) {
                         swipeConsumed = true
+                        cancelPendingKey()
                         try { onSearchToggle?.invoke() } catch (_: Exception) {}
                         return true
                     }

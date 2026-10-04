@@ -5,7 +5,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.View
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
@@ -140,7 +142,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         // ---- Terminal search (FIND key / swipe right-to-left) ----
-        extraKeysView.onSearchToggle = { toggleTerminalSearch() }
+        extraKeysView.onSearchToggle = { showTerminalSearch(animated = true) }
+        searchBar.onSwipeRight = { hideTerminalSearch(animated = true) }
+        searchBar.onRequestClose = { hideTerminalSearch(animated = true) }
         searchBar.onQueryChanged = { query -> terminalView.startSearch(query) }
         searchBar.onNext = { terminalView.nextSearchHit() }
         searchBar.onPrev = { terminalView.prevSearchHit() }
@@ -436,17 +440,115 @@ class MainActivity : AppCompatActivity() {
         return session
     }
 
+    private var isSearchAnimating = false
+
+    private fun showTerminalSearch(animated: Boolean = true) {
+        if (searchBar.visibility == View.VISIBLE && !isSearchAnimating) return
+        if (isSearchAnimating) return
+
+        val width = extraKeysView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val widthF = width.toFloat()
+
+        if (!animated) {
+            extraKeysView.visibility = View.GONE
+            extraKeysView.translationX = 0f
+            searchBar.visibility = View.VISIBLE
+            searchBar.translationX = 0f
+            searchBar.alpha = 1f
+            searchBar.focusInput()
+            return
+        }
+
+        isSearchAnimating = true
+
+        searchBar.visibility = View.VISIBLE
+        searchBar.translationX = widthF
+        searchBar.alpha = 0f
+
+        extraKeysView.animate()
+            .translationX(-widthF)
+            .alpha(0f)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                extraKeysView.visibility = View.GONE
+                extraKeysView.translationX = 0f
+                extraKeysView.alpha = 1f
+            }
+            .start()
+
+        searchBar.animate()
+            .translationX(0f)
+            .alpha(1f)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                isSearchAnimating = false
+                searchBar.focusInput()
+            }
+            .start()
+    }
+
+    private fun hideTerminalSearch(animated: Boolean = true) {
+        if (searchBar.visibility != View.VISIBLE && !isSearchAnimating) return
+        if (isSearchAnimating) return
+
+        val width = searchBar.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val widthF = width.toFloat()
+
+        searchBar.clearInputAndKeyboard()
+
+        if (!animated) {
+            searchBar.visibility = View.GONE
+            searchBar.translationX = 0f
+            terminalView.clearSearch()
+            extraKeysView.visibility = View.VISIBLE
+            extraKeysView.translationX = 0f
+            extraKeysView.alpha = 1f
+            return
+        }
+
+        isSearchAnimating = true
+
+        extraKeysView.visibility = View.VISIBLE
+        extraKeysView.translationX = -widthF
+        extraKeysView.alpha = 0f
+
+        searchBar.animate()
+            .translationX(widthF)
+            .alpha(0f)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                searchBar.visibility = View.GONE
+                searchBar.translationX = 0f
+                searchBar.alpha = 1f
+                terminalView.clearSearch()
+            }
+            .start()
+
+        extraKeysView.animate()
+            .translationX(0f)
+            .alpha(1f)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                isSearchAnimating = false
+            }
+            .start()
+    }
+
     private fun toggleTerminalSearch() {
-        if (searchBar.isShowing()) {
-            searchBar.hide()
+        if (searchBar.visibility == View.VISIBLE) {
+            hideTerminalSearch(animated = true)
         } else {
-            searchBar.show()
+            showTerminalSearch(animated = true)
         }
     }
 
     override fun onBackPressed() {
-        if (searchBar.isShowing()) {
-            searchBar.hide()
+        if (searchBar.visibility == View.VISIBLE) {
+            hideTerminalSearch(animated = true)
             return
         }
         if (drawerLayout.isDrawerOpen(GravityCompat.START)) {

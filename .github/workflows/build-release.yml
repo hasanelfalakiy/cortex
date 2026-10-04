@@ -141,7 +141,7 @@ jobs:
           mkdir -p extra-rootfs/etc/apt/preferences.d
           printf 'Explanation: Pin core glibc and linker packages to prevent upgrading to stock upstream packages that fail Android SECCOMP\nPackage: libc6*\nPin: release *\nPin-Priority: -1\n\nPackage: libc-bin\nPin: release *\nPin-Priority: -1\n\nPackage: libc-dev-bin\nPin: release *\nPin-Priority: -1\n\nPackage: locales\nPin: release *\nPin-Priority: -1\n' > extra-rootfs/etc/apt/preferences.d/01cortex-pins
           printf 'force-confdef\nforce-confold\nforce-unsafe-io\nno-debsig\n' > extra-rootfs/etc/dpkg/dpkg.cfg.d/01cortex
-          printf 'export DPKG_DEB_THREADS_MAX=1\nexport XZ_OPT=-T1\nexport XZ_DEFAULTS=-T1\nexport TAR_OPTIONS=--no-same-owner\nexport DEBIAN_FRONTEND=noninteractive\nexport DEBCONF_FRONTEND=noninteractive\nexport DEBCONF_NONINTERACTIVE_SEEN=true\nunset PREFIX\nexport GODEBUG=netdns=cgo\nshopt -s checkwinsize 2>/dev/null\nif [ -n "$CORTEX_ROOT" ]; then\n  export SSL_CERT_FILE="$CORTEX_ROOT/etc/ssl/certs/ca-certificates.crt"\n  export SSL_CERT_DIR="$CORTEX_ROOT/etc/ssl/certs:/system/etc/security/cacerts"\n  export CURL_CA_BUNDLE="$CORTEX_ROOT/etc/ssl/certs/ca-certificates.crt"\n  export NODE_EXTRA_CA_CERTS="$CORTEX_ROOT/etc/ssl/certs/ca-certificates.crt"\n  export REQUESTS_CA_BUNDLE="$CORTEX_ROOT/etc/ssl/certs/ca-certificates.crt"\nelse\n  export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt\n  export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt\nfi\nexport TZDIR=/usr/share/zoneinfo\nif [ -d /etc/cortex/autostart ]; then\n  for s in /etc/cortex/autostart/*; do\n    if [ -f "$s" ]; then\n      sname="$(basename "$s")"\n      service "$sname" start >/dev/null 2>&1 || true\n    fi\n  done\nfi\n' > extra-rootfs/etc/profile.d/01cortex.sh
+          printf 'export DPKG_DEB_THREADS_MAX=1\nexport XZ_OPT=-T1\nexport XZ_DEFAULTS=-T1\nexport TAR_OPTIONS=--no-same-owner\nexport DEBIAN_FRONTEND=noninteractive\nexport DEBCONF_FRONTEND=noninteractive\nexport DEBCONF_NONINTERACTIVE_SEEN=true\nunset PREFIX\nexport GODEBUG=netdns=cgo\nshopt -s checkwinsize 2>/dev/null\nexport PATH="/home/.opencode/bin:/home/.local/bin:$HOME/.opencode/bin:$HOME/.local/bin:$PATH"\nif [ -n "$CORTEX_ROOT" ]; then\n  export SSL_CERT_FILE="$CORTEX_ROOT/etc/ssl/certs/ca-certificates.crt"\n  export SSL_CERT_DIR="$CORTEX_ROOT/etc/ssl/certs:/system/etc/security/cacerts"\n  export CURL_CA_BUNDLE="$CORTEX_ROOT/etc/ssl/certs/ca-certificates.crt"\n  export NODE_EXTRA_CA_CERTS="$CORTEX_ROOT/etc/ssl/certs/ca-certificates.crt"\n  export REQUESTS_CA_BUNDLE="$CORTEX_ROOT/etc/ssl/certs/ca-certificates.crt"\nelse\n  export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt\n  export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt\nfi\nexport TZDIR=/usr/share/zoneinfo\nif [ -d /etc/cortex/autostart ]; then\n  for s in /etc/cortex/autostart/*; do\n    if [ -f "$s" ]; then\n      sname="$(basename "$s")"\n      service "$sname" start >/dev/null 2>&1 || true\n    fi\n  done\nfi\n' > extra-rootfs/etc/profile.d/01cortex.sh
 
           printf '#!/bin/sh\nexit 101\n' > extra-rootfs/usr/sbin/policy-rc.d
           printf '#!/bin/sh\nexit 0\n' > extra-rootfs/usr/sbin/ldconfig
@@ -329,7 +329,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.73"
+          VERSION="v1.24.74"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -340,23 +340,28 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.73 — Native Dynamic Linker Auto-Discovery & UsrMerge Integrity Protection
+          ### Cortex Release v1.24.74 — APT GPG Signing Key Fix, OpenCode & Muse Code Support, Animated Search Slide
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.73:
-          - **Universal ELF Dynamic Linker Auto-Discovery**:
-            - Added dynamic ELF header inspection in `cortex-pty` and `cortex-hook` to detect binary architecture (`EM_AARCH64`, `EM_ARM`, `EM_X86_64`) and resolve dynamic linkers across all Debian/Ubuntu multiarch directories (`ld-linux-aarch64.so.1`, `ld-2.39.so`, `ld-linux-armhf.so.3`).
-            - Prevents ENOENT (code 127) kernel execution failures when starting native bash or glibc binaries.
-            - Added safe fallback to `/system/bin/sh` if dynamic linker is ever missing, preventing terminal lockup.
-          - **Debian UsrMerge & Symlink Integrity**:
-            - Pre-creates UsrMerge symlinks (`/bin -> usr/bin`, `/sbin -> usr/sbin`, `/lib -> usr/lib`) before archive extraction to prevent EISDIR / EEXIST extraction collisions.
-            - Added `ensureDynamicLinkerSymlinks` to repair missing or broken dynamic linker symlinks automatically on launch and during background updates.
-          - **Startup Race Condition Fix**:
-            - Prevented `MainActivity.onResume()` from creating terminal sessions prematurely while background bootstrap extraction is in progress.
-            - Enhanced `isBootstrapInstalled` to verify dynamic linker existence and complete bootstrap integrity before considering the environment installed.
-          - **Accurate Process ABI Detection**:
-            - Integrated `android.os.Process.is64Bit()` for runtime process ABI detection, guaranteeing 32-bit APKs run 32-bit rootfs and 64-bit APKs run 64-bit rootfs seamlessly.
+          #### What's New in v1.24.74:
+          - **APT GPG Signing Key (NO_PUBKEY 871920D1991BC93C) Fix**:
+            - Hooked fortified libc file operations (`__open64_2`, `__openat64_2`, `open64`, `openat64`) ensuring glibc fortified calls never bypass Cortex path rewriting.
+            - Added `--preload <hook_so>` injection to dynamic linker calls in `cortex-hook.c` and `cortex-pty.c` to guarantee `libcortex-hook.so` is loaded into all child processes including `gpgv`.
+            - Added automatic argument rewriting for `gpgv` invocations so temporary keyrings (`/tmp/apt.XXXXXX.gpg`) and repository keys (`/usr/share/keyrings/...`) map transparently into the Cortex rootfs.
+            - Fully eliminates `NO_PUBKEY 871920D1991BC93C` signature warnings on `noble`, `noble-updates`, `noble-backports`, and `noble-security`.
+          - **OpenCode CLI Out-of-the-Box Support**:
+            - Added `~/.opencode/bin` and `/home/.opencode/bin` to global default `PATH` across Android runtime, `/etc/profile.d/00-env.sh`, and `/etc/profile.d/01cortex.sh`.
+            - Added `/usr/local/bin/opencode` wrapper script for instant execution regardless of installation method.
+          - **Meta Muse Code Support & Static Binary Direct Execution**:
+            - Implemented ELF program header inspection (`has_pt_interp`) in `cortex-hook.c` and `cortex-pty.c` to distinguish statically linked binaries (`PT_INTERP: None`) from dynamic ones.
+            - Statically linked executables (such as Meta Muse Code `muse-bin-*`) now bypass glibc `ld.so` and execute directly via native Linux kernel execution, eliminating dynamic linker crash errors.
+            - Added `/usr/local/bin/muse` wrapper script.
+          - **Animated Slide Transition for Virtual Keys & Terminal Search Bar**:
+            - Unified the virtual keys toolbar and terminal search bar inside a shared 76dp bottom container.
+            - Swiping right-to-left across the virtual keys toolbar smoothly slides the keys off-screen to the left while sliding the terminal search bar in from the right with a 220ms decelerated transition.
+            - Swiping left-to-right across the search bar (or tapping the close button / back) smoothly slides the search bar out to the right and brings the virtual keys back in from the left.
+            - Added touch deferral and movement cancellation so horizontal swipes across the toolbar never trigger accidental keystrokes.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)

@@ -121,6 +121,51 @@ static int find_dynamic_linker(const char *cortex_root, const char *cmd, char *o
     return 0;
 }
 
+static int has_pt_interp(const char *path) {
+    if (!path || path[0] == '\0') return 0;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    unsigned char ehdr[64];
+    ssize_t n = read(fd, ehdr, sizeof(ehdr));
+    if (n < 52 || ehdr[0] != 0x7f || ehdr[1] != 'E' || ehdr[2] != 'L' || ehdr[3] != 'F') {
+        close(fd);
+        return 0;
+    }
+    int is_64 = (ehdr[4] == 2);
+    uint64_t phoff = 0;
+    uint16_t phentsize = 0;
+    uint16_t phnum = 0;
+    if (is_64) {
+        if (n < 64) { close(fd); return 0; }
+        phoff = *(uint64_t *)(ehdr + 32);
+        phentsize = *(uint16_t *)(ehdr + 54);
+        phnum = *(uint16_t *)(ehdr + 56);
+    } else {
+        phoff = *(uint32_t *)(ehdr + 28);
+        phentsize = *(uint16_t *)(ehdr + 42);
+        phnum = *(uint16_t *)(ehdr + 44);
+    }
+    if (phoff == 0 || phentsize == 0 || phnum == 0) {
+        close(fd);
+        return 0;
+    }
+    if (lseek(fd, (off_t)phoff, SEEK_SET) < 0) {
+        close(fd);
+        return 0;
+    }
+    for (int i = 0; i < phnum && i < 128; i++) {
+        uint32_t p_type = 0;
+        if (read(fd, &p_type, sizeof(p_type)) != sizeof(p_type)) break;
+        if (p_type == 3 /* PT_INTERP */) {
+            close(fd);
+            return 1;
+        }
+        if (lseek(fd, (off_t)(phentsize - sizeof(p_type)), SEEK_CUR) < 0) break;
+    }
+    close(fd);
+    return 0;
+}
+
 JNIEXPORT jintArray JNICALL
 Java_org_cortex_terminal_pty_PtyNative_createPty(
     JNIEnv *env,
@@ -282,6 +327,7 @@ Java_org_cortex_terminal_pty_PtyNative_createPty(
         }
 
         int is_glibc_elf = 0;
+        int is_dynamic = 0;
         if (cortex_root && strlen(cortex_root) > 0 && strncmp(cmd, cortex_root, strlen(cortex_root)) == 0) {
             int fd = open(cmd, O_RDONLY);
             if (fd >= 0) {
@@ -290,11 +336,12 @@ Java_org_cortex_terminal_pty_PtyNative_createPty(
                 close(fd);
                 if (n >= 4 && (unsigned char)hdr[0] == 0x7f && hdr[1] == 'E' && hdr[2] == 'L' && hdr[3] == 'F') {
                     is_glibc_elf = 1;
+                    is_dynamic = has_pt_interp(cmd);
                 }
             }
         }
 
-        if (is_glibc_elf) {
+        if (is_glibc_elf && is_dynamic) {
             char ld_so[PATH_MAX] = {0};
             if (find_dynamic_linker(cortex_root, cmd, ld_so, sizeof(ld_so))) {
                 chmod(ld_so, 0755);

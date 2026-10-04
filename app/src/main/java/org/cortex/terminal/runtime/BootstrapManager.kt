@@ -1838,6 +1838,7 @@ object BootstrapManager {
             restoreGpgv(root)
             ensureMachineId(root)
             ensureMuseLauncher(root, home)
+            ensureOpenCodeLauncher(root, home)
             ensureProfileEnvironment(root)
         } catch (e: Exception) {
             android.util.Log.e("BootstrapManager", "Failed in ensureEssentialBinaries", e)
@@ -1886,6 +1887,41 @@ object BootstrapManager {
         }
     }
 
+    fun ensureOpenCodeLauncher(root: File, home: File) {
+        try {
+            val usrLocalBin = File(root, "usr/local/bin")
+            usrLocalBin.mkdirs()
+            val opencode = File(usrLocalBin, "opencode")
+            val opencodeScript = "#!/bin/bash\n" +
+                "for cand in \"\$HOME/.opencode/bin/opencode\" \"/home/.opencode/bin/opencode\" \"\$HOME/.local/bin/opencode\" \"/home/.local/bin/opencode\"; do\n" +
+                "    if [ -x \"\$cand\" ]; then\n" +
+                "        exec \"\$cand\" \"\$@\"\n" +
+                "    fi\n" +
+                "done\n" +
+                "if command -v npm >/dev/null 2>&1; then\n" +
+                "    npm_bin=\"\$(npm root -g 2>/dev/null)/opencode-ai/bin/opencode\"\n" +
+                "    if [ -x \"\$npm_bin\" ]; then\n" +
+                "        exec \"\$npm_bin\" \"\$@\"\n" +
+                "    fi\n" +
+                "fi\n" +
+                "echo \"OpenCode CLI is not yet installed.\"\n" +
+                "echo \"Installing OpenCode CLI via https://opencode.ai/install...\"\n" +
+                "curl -fsSL https://opencode.ai/install | bash\n" +
+                "for cand in \"\$HOME/.opencode/bin/opencode\" \"/home/.opencode/bin/opencode\" \"\$HOME/.local/bin/opencode\" \"/home/.local/bin/opencode\"; do\n" +
+                "    if [ -x \"\$cand\" ]; then\n" +
+                "        exec \"\$cand\" \"\$@\"\n" +
+                "    fi\n" +
+                "done\n" +
+                "exit 127\n"
+            opencode.writeText(opencodeScript)
+            opencode.setExecutable(true, false)
+            opencode.setReadable(true, false)
+            try { android.system.Os.chmod(opencode.absolutePath, 493) } catch (e: Exception) {}
+        } catch (e: Exception) {
+            android.util.Log.e("BootstrapManager", "Failed to ensure opencode launcher", e)
+        }
+    }
+
     fun ensureMuseLauncher(root: File, home: File) {
         try {
             val usrLocalBin = File(root, "usr/local/bin")
@@ -1900,10 +1936,21 @@ object BootstrapManager {
                 "        exec \"\$cand\" \"\$@\"\n" +
                 "    fi\n" +
                 "done\n" +
-                "if [ -f \"\$HOME/.local/bin/muse\" ]; then\n" +
+                "if [ -x \"/home/.local/bin/muse\" ]; then\n" +
+                "    exec \"/home/.local/bin/muse\" \"\$@\"\n" +
+                "fi\n" +
+                "echo \"Meta Muse Code CLI is not yet installed.\"\n" +
+                "echo \"Installing Meta Muse Code CLI via https://dev.meta.ai/install.sh...\"\n" +
+                "curl -fsSL https://dev.meta.ai/install.sh | bash\n" +
+                "if [ -x \"\$HOME/.local/bin/muse\" ]; then\n" +
                 "    exec \"\$HOME/.local/bin/muse\" \"\$@\"\n" +
                 "fi\n" +
-                "exec /home/.local/bin/muse \"\$@\"\n"
+                "for cand in \"\$HOME/.local/bin/muse-bin-\"* \"/home/.local/bin/muse-bin-\"*; do\n" +
+                "    if [ -x \"\$cand\" ]; then\n" +
+                "        exec \"\$cand\" \"\$@\"\n" +
+                "    fi\n" +
+                "done\n" +
+                "exit 127\n"
             muse.writeText(museScript)
             muse.setExecutable(true, false)
             muse.setReadable(true, false)
@@ -1926,7 +1973,8 @@ object BootstrapManager {
                 "    fi\n" +
                 "fi\n" +
                 "export LD_LIBRARY_PATH=\"\$CORTEX_ROOT/lib:\$CORTEX_ROOT/usr/lib:\$CORTEX_ROOT/lib/aarch64-linux-gnu:\$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:\$CORTEX_ROOT/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/local/lib:\$CORTEX_ROOT/usr/lib/systemd:\$CORTEX_ROOT/lib/systemd\"\n" +
-                "export LD_PRELOAD=\"\$CORTEX_ROOT/usr/lib/libcortex-hook.so\"\n"
+                "export LD_PRELOAD=\"\$CORTEX_ROOT/usr/lib/libcortex-hook.so\"\n" +
+                "export PATH=\"/home/.opencode/bin:\$HOME/.opencode/bin:/home/.local/bin:\$HOME/.local/bin:\$PATH\"\n"
             envSh.writeText(envContent)
             envSh.setReadable(true, false)
             try { android.system.Os.chmod(envSh.absolutePath, 420) } catch (e: Exception) {}

@@ -1,17 +1,20 @@
 package org.cortex.terminal.view
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.AttributeSet
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
+import org.cortex.terminal.R
 
 class TerminalSearchBar @JvmOverloads constructor(
     context: Context,
@@ -23,30 +26,39 @@ class TerminalSearchBar @JvmOverloads constructor(
     var onNext: (() -> Unit)? = null
     var onPrev: (() -> Unit)? = null
     var onClose: (() -> Unit)? = null
+    var onSwipeRight: (() -> Unit)? = null
+    var onRequestClose: (() -> Unit)? = null
 
     private val input: EditText
     private val countText: TextView
+
+    private var swipeStartX = 0f
+    private var swipeStartY = 0f
+    private var swipeConsumed = false
 
     init {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setBackgroundColor(Color.parseColor("#11111b"))
-        val pad = (8 * resources.displayMetrics.density).toInt()
-        setPadding(pad, pad, pad, pad)
+        val pad = (6 * resources.displayMetrics.density).toInt()
+        val horizPad = (10 * resources.displayMetrics.density).toInt()
+        setPadding(horizPad, pad, horizPad, pad)
         visibility = GONE
 
+        val inputHeight = (42 * resources.displayMetrics.density).toInt()
         input = EditText(context).apply {
-            layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply {
+            layoutParams = LayoutParams(0, inputHeight, 1f).apply {
                 marginEnd = (8 * resources.displayMetrics.density).toInt()
             }
-            setBackgroundColor(Color.parseColor("#1e1e2e"))
+            setBackgroundResource(R.drawable.key_button_bg)
             setTextColor(Color.WHITE)
             setHintTextColor(Color.parseColor("#6c7086"))
             hint = "Search terminal…"
             textSize = 14f
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_SEARCH
-            setPadding(pad, pad, pad, pad)
+            val inputPad = (10 * resources.displayMetrics.density).toInt()
+            setPadding(inputPad, 0, inputPad, 0)
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
@@ -65,7 +77,7 @@ class TerminalSearchBar @JvmOverloads constructor(
 
         countText = TextView(context).apply {
             layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = (4 * resources.displayMetrics.density).toInt()
+                marginEnd = (6 * resources.displayMetrics.density).toInt()
             }
             setTextColor(Color.parseColor("#a6adc8"))
             textSize = 12f
@@ -73,9 +85,13 @@ class TerminalSearchBar @JvmOverloads constructor(
         }
         addView(countText)
 
+        val btnSize = (38 * resources.displayMetrics.density).toInt()
         val btnPrev = ImageButton(context).apply {
+            layoutParams = LayoutParams(btnSize, btnSize).apply {
+                marginEnd = (4 * resources.displayMetrics.density).toInt()
+            }
             setImageResource(android.R.drawable.arrow_up_float)
-            setBackgroundColor(Color.TRANSPARENT)
+            setBackgroundResource(R.drawable.key_button_bg)
             contentDescription = "Previous match"
             setColorFilter(Color.WHITE)
             setOnClickListener { onPrev?.invoke() }
@@ -83,8 +99,11 @@ class TerminalSearchBar @JvmOverloads constructor(
         addView(btnPrev)
 
         val btnNext = ImageButton(context).apply {
+            layoutParams = LayoutParams(btnSize, btnSize).apply {
+                marginEnd = (4 * resources.displayMetrics.density).toInt()
+            }
             setImageResource(android.R.drawable.arrow_down_float)
-            setBackgroundColor(Color.TRANSPARENT)
+            setBackgroundResource(R.drawable.key_button_bg)
             contentDescription = "Next match"
             setColorFilter(Color.WHITE)
             setOnClickListener { onNext?.invoke() }
@@ -92,28 +111,93 @@ class TerminalSearchBar @JvmOverloads constructor(
         addView(btnNext)
 
         val btnClose = ImageButton(context).apply {
+            layoutParams = LayoutParams(btnSize, btnSize)
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
-            setBackgroundColor(Color.TRANSPARENT)
+            setBackgroundResource(R.drawable.key_button_bg)
             contentDescription = "Close search"
             setColorFilter(Color.WHITE)
-            setOnClickListener { hide() }
+            setOnClickListener {
+                if (onRequestClose != null) {
+                    onRequestClose?.invoke()
+                } else {
+                    hide()
+                }
+            }
         }
         addView(btnClose)
     }
 
-    fun show() {
-        visibility = VISIBLE
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.action) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeStartX = ev.x
+                swipeStartY = ev.y
+                swipeConsumed = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!swipeConsumed) {
+                    val dx = ev.x - swipeStartX
+                    val dy = kotlin.math.abs(ev.y - swipeStartY)
+                    val density = resources.displayMetrics.density
+                    // Left-to-right swipe across the search bar (dx > 45dp) slides back to extra keys
+                    if (dx > 45 * density && dx > dy * 1.3f) {
+                        swipeConsumed = true
+                        onSwipeRight?.invoke()
+                        return true
+                    }
+                }
+            }
+        }
+        return super.onInterceptTouchEvent(ev)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.action) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeStartX = ev.x
+                swipeStartY = ev.y
+                swipeConsumed = false
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!swipeConsumed) {
+                    val dx = ev.x - swipeStartX
+                    val dy = kotlin.math.abs(ev.y - swipeStartY)
+                    val density = resources.displayMetrics.density
+                    if (dx > 45 * density && dx > dy * 1.3f) {
+                        swipeConsumed = true
+                        onSwipeRight?.invoke()
+                        return true
+                    }
+                }
+            }
+        }
+        return super.onTouchEvent(ev)
+    }
+
+    fun focusInput() {
         input.requestFocus()
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
     }
 
-    fun hide() {
-        visibility = GONE
+    fun clearInputAndKeyboard() {
         input.setText("")
-        try { onClose?.invoke() } catch (_: Exception) {}
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         try { imm?.hideSoftInputFromWindow(windowToken, 0) } catch (_: Exception) {}
+        try { imm?.hideSoftInputFromWindow(input.windowToken, 0) } catch (_: Exception) {}
+    }
+
+    fun show() {
+        visibility = VISIBLE
+        focusInput()
+    }
+
+    fun hide() {
+        visibility = GONE
+        clearInputAndKeyboard()
+        try { onClose?.invoke() } catch (_: Exception) {}
     }
 
     fun isShowing(): Boolean = visibility == VISIBLE

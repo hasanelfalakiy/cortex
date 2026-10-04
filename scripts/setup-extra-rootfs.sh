@@ -492,20 +492,31 @@ syntax "default"
 EOFNANO
 chmod 0644 extra-rootfs/usr/share/nano/default.nanorc
 
-cat << 'EOFMUSE' > extra-rootfs/usr/local/bin/muse
+cat << 'EOFOPENCODE' > extra-rootfs/usr/local/bin/opencode
 #!/bin/bash
-if [ -x "$HOME/.local/bin/muse" ]; then
-    exec "$HOME/.local/bin/muse" "$@"
-fi
-for cand in "$HOME/.local/bin/muse-bin-"* "/home/.local/bin/muse-bin-"*; do
-    if [ -x "$cand" ]; then
+for cand in "$HOME/.opencode/bin/opencode" "/home/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "/home/.local/bin/opencode"; do
+    if [ -x "$cand" ] || [ -f "$cand" ]; then
+        chmod +x "$cand" 2>/dev/null || true
         exec "$cand" "$@"
     fi
 done
-if [ -f "$HOME/.local/bin/muse" ]; then
-    exec "$HOME/.local/bin/muse" "$@"
-fi
-exec /home/.local/bin/muse "$@"
+echo "opencode is not installed yet." >&2
+echo "You can install it with: curl -fsSL https://opencode.ai/install | bash" >&2
+exit 127
+EOFOPENCODE
+chmod 0755 extra-rootfs/usr/local/bin/opencode
+
+cat << 'EOFMUSE' > extra-rootfs/usr/local/bin/muse
+#!/bin/bash
+for cand in "$HOME/.local/bin/muse" "/home/.local/bin/muse" "$HOME/.local/bin/muse-bin-"* "/home/.local/bin/muse-bin-"*; do
+    if [ -x "$cand" ] || [ -f "$cand" ]; then
+        chmod +x "$cand" 2>/dev/null || true
+        exec "$cand" "$@"
+    fi
+done
+echo "muse is not installed yet." >&2
+echo "You can install it with: curl -fsSL https://muse.meta.com/install.sh | bash" >&2
+exit 127
 EOFMUSE
 chmod 0755 extra-rootfs/usr/local/bin/muse
 
@@ -520,6 +531,7 @@ if [ -n "$CORTEX_ROOT" ]; then
     export LD_LIBRARY_PATH="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib:$CORTEX_ROOT/usr/lib/systemd:$CORTEX_ROOT/lib/systemd"
     export LD_PRELOAD="$CORTEX_ROOT/usr/lib/libcortex-hook.so"
 fi
+export PATH="/home/.opencode/bin:/home/.local/bin:$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
 EOFENV
 chmod 0644 extra-rootfs/etc/profile.d/00-env.sh
 
