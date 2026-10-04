@@ -16,14 +16,6 @@
     android:paddingBottom="8dp"
     android:background="@drawable/session_item_inactive_bg">
 
-    <!-- Active Indicator Pill -->
-    <View
-        android:id="@+id/sessionActiveIndicator"
-        android:layout_width="4dp"
-        android:layout_height="24dp"
-        android:layout_marginEnd="12dp"
-        android:background="@drawable/key_button_active"
-        android:visibility="gone" />
 
     <LinearLayout
         android:layout_width="0dp"

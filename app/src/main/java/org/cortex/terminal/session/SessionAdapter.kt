@@ -16,7 +16,6 @@ class SessionAdapter(
 
     class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val root: View = view.findViewById(R.id.sessionItemRoot)
-        val indicator: View = view.findViewById(R.id.sessionActiveIndicator)
         val labelText: TextView = view.findViewById(R.id.sessionLabelText)
         val statusText: TextView = view.findViewById(R.id.sessionStatusText)
         val closeBtn: TextView = view.findViewById(R.id.btnSessionClose)
@@ -34,12 +33,10 @@ class SessionAdapter(
 
         if (isActive) {
             holder.root.setBackgroundResource(R.drawable.session_item_active_bg)
-            holder.indicator.visibility = View.VISIBLE
             holder.statusText.text = "Active session"
             holder.statusText.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.cortex_primary))
         } else {
             holder.root.setBackgroundResource(R.drawable.session_item_inactive_bg)
-            holder.indicator.visibility = View.GONE
             holder.statusText.text = "Background"
             holder.statusText.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.cortex_text_muted))
         }

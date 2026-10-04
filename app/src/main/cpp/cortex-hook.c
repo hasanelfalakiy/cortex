@@ -538,7 +538,9 @@ static void unlink_mapped_unix_socket(const char *target) {
         } else {
             snprintf(short_path, sizeof(short_path), "/tmp/.ctx_sock_%016llx", hash);
         }
-        unlink(short_path);
+        static int (*orig_unlink)(const char *) = NULL;
+        if (!orig_unlink) orig_unlink = (int (*)(const char *))dlsym(RTLD_NEXT, "unlink");
+        if (orig_unlink) orig_unlink(short_path);
     }
 }
 
@@ -1127,26 +1129,51 @@ int statx(int dirfd, const char *pathname, int flags, unsigned int mask, struct 
     return orig_statx ? orig_statx(dirfd, target, flags, mask, statxbuf) : -1;
 }
 
-// Hook access
-int access(const char *pathname, int mode) {
-    static int (*orig_access)(const char *, int) = NULL;
-    if (!orig_access) orig_access = (int (*)(const char *, int))dlsym(RTLD_NEXT, "access");
-    char buf[PATH_MAX];
-    const char *target = rewrite_path(pathname, buf, sizeof(buf));
-    return orig_access ? orig_access(target, mode) : -1;
-}
-
 // Hook faccessat
 int faccessat(int dirfd, const char *pathname, int mode, int flags) {
-    static int (*orig_faccessat)(int, const char *, int, int) = NULL;
-    if (!orig_faccessat) orig_faccessat = (int (*)(int, const char *, int, int))dlsym(RTLD_NEXT, "faccessat");
-    char buf[PATH_MAX];
-    const char *target = (pathname && pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig_faccessat ? orig_faccessat(dirfd, target, mode, flags) : -1;
+    init_cortex_hook();
+    if (!pathname) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    struct stat st;
+    int stat_flags = (flags & AT_SYMLINK_NOFOLLOW) ? AT_SYMLINK_NOFOLLOW : 0;
+    if (fstatat(dirfd, pathname, &st, stat_flags) != 0) {
+        return -1;
+    }
+
+    if (mode == F_OK) {
+        return 0;
+    }
+
+    if (mode & X_OK) {
+        if (S_ISDIR(st.st_mode)) return 0;
+        if ((st.st_mode & 0111) != 0) return 0;
+        if (strstr(pathname, "/bin/") || strstr(pathname, "/sbin/")) return 0;
+        errno = EACCES;
+        return -1;
+    }
+
+    return 0;
 }
 
 int faccessat2(int dirfd, const char *pathname, int mode, int flags) {
     return faccessat(dirfd, pathname, mode, flags);
+}
+
+// Hook access
+int access(const char *pathname, int mode) {
+    return faccessat(AT_FDCWD, pathname, mode, 0);
+}
+
+// Hook euidaccess and eaccess
+int euidaccess(const char *pathname, int mode) {
+    return faccessat(AT_FDCWD, pathname, mode, AT_EACCESS);
+}
+
+int eaccess(const char *pathname, int mode) {
+    return faccessat(AT_FDCWD, pathname, mode, AT_EACCESS);
 }
 
 // Hook chmod
@@ -1184,7 +1211,7 @@ int unlinkat(int dirfd, const char *pathname, int flags) {
     char buf[PATH_MAX];
     const char *target = (pathname && pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
     if (target) unlink_mapped_unix_socket(target);
-    return orig_unlinkat(dirfd, target, flags);
+    return orig_unlinkat ? orig_unlinkat(dirfd, target, flags) : -1;
 }
 
 // Hook rmdir
@@ -1934,6 +1961,15 @@ int prctl(int option, ...) {
 #ifndef __NR_close_range
 #define __NR_close_range 436
 #endif
+#ifndef __NR_faccessat
+#if defined(__aarch64__)
+#define __NR_faccessat 48
+#elif defined(__arm__)
+#define __NR_faccessat 334
+#elif defined(__x86_64__)
+#define __NR_faccessat 269
+#endif
+#endif
 #ifndef __NR_faccessat2
 #define __NR_faccessat2 439
 #endif
@@ -2171,6 +2207,12 @@ long syscall(long number, ...) {
 #if defined(__NR_statx)
     if (number == __NR_statx) {
         return (long)statx((int)arg1, (const char *)arg2, (int)arg3, (unsigned int)arg4, (struct statx *)arg5);
+    }
+#endif
+
+#if defined(__NR_faccessat)
+    if (number == __NR_faccessat) {
+        return (long)faccessat((int)arg1, (const char *)arg2, (int)arg3, 0);
     }
 #endif
 

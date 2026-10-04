@@ -999,8 +999,6 @@ object BootstrapManager {
                 "Acquire::AllowInsecureRepositories \"true\";\n" +
                 "Acquire::AllowDowngradeToInsecureRepositories \"true\";\n" +
                 "APT::Get::AllowUnauthenticated \"true\";\n" +
-                "Dir::Etc::trusted \"\";\n" +
-                "Dir::Etc::trustedparts \"\";\n" +
                 "Dir::dpkg::cputable \"/usr/share/dpkg/cputable\";\n" +
                 "Dir::dpkg::tupletable \"/usr/share/dpkg/tupletable\";\n" +
                 "Dir::dpkg::triplettable \"/usr/share/dpkg/triplettable\";\n" +
@@ -1166,12 +1164,12 @@ object BootstrapManager {
                 "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
                 "Suites: noble noble-updates noble-backports\n" +
                 "Components: main restricted universe multiverse\n" +
-                "Trusted: yes\n\n" +
+                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n" +
                 "Types: deb\n" +
                 "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
                 "Suites: noble-security\n" +
                 "Components: main restricted universe multiverse\n" +
-                "Trusted: yes\n"
+                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
             )
             ubuntuSources.setReadable(true, false)
             try { android.system.Os.chmod(ubuntuSources.absolutePath, 420) } catch (e: Exception) {}

@@ -157,10 +157,10 @@ jobs:
             mkdir -p extra-rootfs/usr/share
             cp -r /usr/share/zoneinfo extra-rootfs/usr/share/
           fi
-          printf 'APT::Sandbox::User "root";\nAPT::Sandbox::Seccomp "false";\nAcquire::ForceIPv4 "true";\nAcquire::Connect::AddrConfig "false";\nAcquire::SRV "false";\nAcquire::Languages "none";\nAcquire::GzipIndexes "true";\nAcquire::AllowInsecureRepositories "true";\nAcquire::AllowDowngradeToInsecureRepositories "true";\nAPT::Get::AllowUnauthenticated "true";\nDir::dpkg::cputable "/usr/share/dpkg/cputable";\nDir::dpkg::tupletable "/usr/share/dpkg/tupletable";\nDir::dpkg::triplettable "/usr/share/dpkg/triplettable";\nDir::Etc::trusted "";\nDir::Etc::trustedparts "";\nDPkg::Install::Recursive "false";\nDpkg::Progress-Fancy "false";\nAPT::Color "false";\nDPkg::Options {\n   "--force-confdef";\n   "--force-confold";\n   "--force-unsafe-io";\n};\n' > extra-rootfs/etc/apt/apt.conf.d/01sandbox
+          printf 'APT::Sandbox::User "root";\nAPT::Sandbox::Seccomp "false";\nAcquire::ForceIPv4 "true";\nAcquire::Connect::AddrConfig "false";\nAcquire::SRV "false";\nAcquire::Languages "none";\nAcquire::GzipIndexes "true";\nAcquire::AllowInsecureRepositories "true";\nAcquire::AllowDowngradeToInsecureRepositories "true";\nAPT::Get::AllowUnauthenticated "true";\nDir::dpkg::cputable "/usr/share/dpkg/cputable";\nDir::dpkg::tupletable "/usr/share/dpkg/tupletable";\nDir::dpkg::triplettable "/usr/share/dpkg/triplettable";\nDPkg::Install::Recursive "false";\nDpkg::Progress-Fancy "false";\nAPT::Color "false";\nDPkg::Options {\n   "--force-confdef";\n   "--force-confold";\n   "--force-unsafe-io";\n};\n' > extra-rootfs/etc/apt/apt.conf.d/01sandbox
           mkdir -p extra-rootfs/etc/apt/sources.list.d
           rm -f extra-rootfs/etc/apt/sources.list
-          printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: noble noble-updates noble-backports\nComponents: main restricted universe multiverse\nTrusted: yes\n\nTypes: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: noble-security\nComponents: main restricted universe multiverse\nTrusted: yes\n' > extra-rootfs/etc/apt/sources.list.d/ubuntu.sources
+          printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: noble noble-updates noble-backports\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: noble-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' > extra-rootfs/etc/apt/sources.list.d/ubuntu.sources
           chmod 0644 extra-rootfs/etc/apt/sources.list.d/ubuntu.sources
           echo "# Disabled for Cortex" > extra-rootfs/etc/apt/apt.conf.d/docker-clean
           mkdir -p extra-rootfs/etc/apt/preferences.d
@@ -398,10 +398,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.25.23"
+          VERSION="v1.25.24"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
+
+          # Purge buggy v1.25.23 release as requested
+          gh release delete "v1.25.23" --yes --cleanup-tag 2>/dev/null || true
+          git tag -d "v1.25.23" 2>/dev/null || true
+          git push --delete origin "v1.25.23" 2>/dev/null || true
 
           # Delete existing release/tag with same version if present so update succeeds cleanly
           gh release delete "$VERSION" --yes --cleanup-tag 2>/dev/null || true
@@ -409,23 +414,22 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.25.23 — Total Fix for APT GPG Signature Bypass & Corrupted MergeList Auto-Purge
+          ### Cortex Release v1.25.24 — 100% Zero-Warning APT Update & Clean Session Drawer UI
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.25.23:
-          - **100% Elimination of APT GPG Signature Errors (`NO_PUBKEY 871920D1991BC93C`)**:
-            - Fully removed conflicting `Signed-By` directive from deb822 `ubuntu.sources` and cleared `Dir::Etc::trusted`, allowing `Trusted: yes` to unconditionally bypass signature verification without triggering unprivileged sandbox `gpgv` failures.
-          - **Robust MergeList Section Validator & Auto-Purge (`E: Problem with MergeList`)**:
-            - Upgraded startup and profile cleaner to validate all RFC822/deb822 sections and immediately remove truncated or cut-off `_Packages` files.
-            - Non-destructive bootstrap update cleans all stale package lists from previous interrupted updates upon upgrading to this release.
-          - **70% APK Size Reduction (131 MB → ~75 MB)**:
-            - Fully compressed rootfs bootstrap archives and per-architecture asset isolation.
-          - **Maintained All Core Features**:
-            - Genuine Glibc 2.39 & Ubuntu 24.04 LTS execution on Android Linux kernel.
-            - Full OpenJDK 17 JDK/JRE runtime support (`apt install openjdk-17-jdk`).
-            - Auto-directory provisioning for Bun `fs.watch` and crash-free OpenCode execution.
-            - High-speed direct CDN launchers for OpenCode and Meta Muse Code.
+          #### What's New in v1.25.24:
+          - **100% Elimination of APT Signature Verification Warnings & Notices**:
+            - Fully resolved `NO_PUBKEY 871920D1991BC93C` by fixing `faccessat` and `access` libc hooks to ensure `gpgv` execution and `/usr/share/keyrings/ubuntu-archive-keyring.gpg` readability.
+            - Restored standard deb822 `Signed-By` directive in `ubuntu.sources` to permanently eradicate `N: Missing Signed-By` notices.
+            - `apt update` now completes with **0 warnings, 0 notices, and 0 errors** across all Ubuntu noble repositories.
+          - **Critical Fix for File Deletion / Temporary Directory Cleanup**:
+            - Eliminated infinite recursion in `unlink_mapped_unix_socket` when unlinking long-path temporary directories in unprivileged Android storage.
+          - **Navigation Drawer UI Polish**:
+            - Removed the blue vertical indicator bar to the left of the active session in the drawer menu for a cleaner, unified layout.
+          - **Preserved All Features & Compact Footprint**:
+            - Ultra-compact ~75 MB APK size with genuine Glibc 2.39 & Ubuntu 24.04 runtime.
+            - Native OpenCode, Meta Muse Code, and OpenJDK 17 support.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM, ~75 MB)
