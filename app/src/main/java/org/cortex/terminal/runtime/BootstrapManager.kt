@@ -1156,14 +1156,12 @@ object BootstrapManager {
                 "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
                 "Suites: noble noble-updates noble-backports\n" +
                 "Components: main restricted universe multiverse\n" +
-                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" +
-                "Trusted: yes\n\n" +
+                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n" +
                 "Types: deb\n" +
                 "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
                 "Suites: noble-security\n" +
                 "Components: main restricted universe multiverse\n" +
-                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" +
-                "Trusted: yes\n"
+                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
             )
             ubuntuSources.setReadable(true, false)
             try { android.system.Os.chmod(ubuntuSources.absolutePath, 420) } catch (e: Exception) {}
@@ -1303,39 +1301,14 @@ object BootstrapManager {
             etcDir.mkdirs()
             val hostsFile = File(etcDir, "hosts")
             val defaultHosts = "127.0.0.1 localhost localhost.localdomain\n" +
-                "::1 localhost ip6-localhost ip6-loopback\n" +
-                "91.189.91.103 ports.ubuntu.com\n" +
-                "91.189.92.21 ports.ubuntu.com\n" +
-                "91.189.91.102 ports.ubuntu.com\n" +
-                "91.189.92.20 ports.ubuntu.com\n" +
-                "185.125.190.81 archive.ubuntu.com\n" +
-                "91.189.91.81 archive.ubuntu.com\n" +
-                "185.125.190.82 security.ubuntu.com\n" +
-                "91.189.91.82 security.ubuntu.com\n" +
-                "151.101.130.132 deb.debian.org\n" +
-                "151.101.2.132 deb.debian.org\n" +
-                "151.101.66.132 deb.debian.org\n" +
-                "151.101.194.132 deb.debian.org\n" +
-                "151.101.130.132 security.debian.org\n" +
-                "151.101.2.132 security.debian.org\n" +
-                "151.101.66.132 security.debian.org\n" +
-                "151.101.194.132 security.debian.org\n" +
-                "151.101.130.132 cdn-fastly.deb.debian.org\n" +
-                "151.101.2.132 cdn-fastly.deb.debian.org\n" +
-                "142.251.127.95 oauth2.googleapis.com\n" +
-                "142.251.127.84 accounts.google.com\n" +
-                "142.250.74.202 www.googleapis.com\n" +
-                "57.144.36.141 dev.meta.ai\n" +
-                "57.144.36.141 api.meta.ai\n" +
-                "57.144.36.141 auth.meta.com\n" +
-                "57.144.36.128 lookaside.facebook.com\n"
+                "::1 localhost ip6-localhost ip6-loopback\n"
 
             if (!hostsFile.exists()) {
                 hostsFile.writeText(defaultHosts)
             } else {
                 val currentText = hostsFile.readText()
-                if (!currentText.contains("api.meta.ai")) {
-                    hostsFile.writeText(currentText.trimEnd() + "\n" + defaultHosts)
+                if (currentText.contains("ports.ubuntu.com") || currentText.contains("api.meta.ai")) {
+                    hostsFile.writeText(defaultHosts)
                 }
             }
         } catch (e: Exception) {

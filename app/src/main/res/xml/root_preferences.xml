@@ -32,18 +32,6 @@
             app:title="Keep Screen On" />
     </PreferenceCategory>
 
-    <PreferenceCategory app:title="Environment">
-        <Preference
-            app:key="apt_install_pref"
-            app:summary="Ubuntu 24.04 LTS Noble Glibc rootfs and APT package manager"
-            app:title="APT Package Manager" />
-
-        <Preference
-            app:key="cortex_info_pref"
-            app:summary="Tap to view rootless Glibc environment details"
-            app:title="Runtime Information" />
-    </PreferenceCategory>
-
     <PreferenceCategory app:title="Community &amp; Support">
         <Preference
             app:key="telegram_contact_pref"

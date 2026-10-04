@@ -2021,8 +2021,32 @@ int setns(int fd, int nstype) {
     return 0;
 }
 
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
 int close_range(unsigned int first, unsigned int last, int flags) {
-    (void)flags;
+    static int (*orig_close_range)(unsigned int, unsigned int, int) = NULL;
+    if (!orig_close_range) {
+        orig_close_range = (int (*)(unsigned int, unsigned int, int))dlsym(RTLD_NEXT, "close_range");
+    }
+#ifdef __NR_close_range
+    static long (*orig_raw_syscall)(long, ...) = NULL;
+    if (!orig_raw_syscall) orig_raw_syscall = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");
+    if (orig_raw_syscall) {
+        long sret = orig_raw_syscall(__NR_close_range, first, last, flags);
+        if (sret == 0) return 0;
+        if (sret < 0 && errno != ENOSYS) return -1;
+    }
+#endif
+    if (orig_close_range) {
+        int cret = orig_close_range(first, last, flags);
+        if (cret == 0) return 0;
+        if (cret < 0 && errno != ENOSYS) return -1;
+    }
+
+    int set_cloexec = (flags & CLOSE_RANGE_CLOEXEC) != 0;
+
     DIR *d = opendir("/proc/self/fd");
     if (d) {
         int dfd = dirfd(d);
@@ -2030,8 +2054,15 @@ int close_range(unsigned int first, unsigned int last, int flags) {
         while ((de = readdir(d)) != NULL) {
             if (de->d_name[0] == '.') continue;
             int fd = atoi(de->d_name);
-            if (fd >= (int)first && fd <= (int)last && fd != dfd) {
-                close(fd);
+            if (fd >= (int)first && (last == ~0U || (unsigned int)fd <= last) && fd != dfd) {
+                if (set_cloexec) {
+                    int fl = fcntl(fd, F_GETFD);
+                    if (fl >= 0) {
+                        fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
+                    }
+                } else {
+                    close(fd);
+                }
             }
         }
         closedir(d);
@@ -2041,7 +2072,14 @@ int close_range(unsigned int first, unsigned int last, int flags) {
     if (max_fd <= 0 || max_fd > 1024) max_fd = 1024;
     int end = (last < (unsigned int)max_fd) ? (int)last : max_fd;
     for (int fd = (int)first; fd <= end; fd++) {
-        close(fd);
+        if (set_cloexec) {
+            int fl = fcntl(fd, F_GETFD);
+            if (fl >= 0) {
+                fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
+            }
+        } else {
+            close(fd);
+        }
     }
     return 0;
 }

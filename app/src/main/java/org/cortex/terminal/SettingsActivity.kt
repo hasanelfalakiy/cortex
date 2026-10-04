@@ -2,12 +2,9 @@ package org.cortex.terminal
 
 import android.os.Bundle
 import android.view.MenuItem
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
-import org.cortex.terminal.runtime.CortexRuntime
-import org.cortex.terminal.runtime.Environment
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -38,16 +35,6 @@ class SettingsActivity : AppCompatActivity() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.root_preferences, rootKey)
 
-            findPreference<Preference>("apt_install_pref")?.setOnPreferenceClickListener {
-                showAptInfo()
-                true
-            }
-
-            findPreference<Preference>("cortex_info_pref")?.setOnPreferenceClickListener {
-                showRuntimeInfo()
-                true
-            }
-
             findPreference<Preference>("telegram_contact_pref")?.setOnPreferenceClickListener {
                 try {
                     val intent = android.content.Intent(
@@ -60,51 +47,6 @@ class SettingsActivity : AppCompatActivity() {
                 } catch (e: Exception) {}
                 true
             }
-        }
-
-        private fun showAptInfo() {
-            val ctx = requireContext()
-            val aptFile = java.io.File(Environment.getCortexRoot(ctx), "usr/bin/apt")
-            val isInstalled = aptFile.exists()
-            val status = if (isInstalled) "Installed and Ready" else "Available (Run 'apt' in terminal)"
-
-            val msg = """
-                Status: $status
-                Architecture: ${CortexRuntime.architecture}
-                Package System: Debian APT / DPKG with GNU libc
-
-                To install or use packages, simply open the terminal and run:
-                  apt update
-                  apt install <package>
-            """.trimIndent()
-
-            AlertDialog.Builder(ctx)
-                .setTitle("APT Package Manager")
-                .setMessage(msg)
-                .setPositiveButton("OK", null)
-                .show()
-        }
-
-        private fun showRuntimeInfo() {
-            val ctx = requireContext()
-            val arch = CortexRuntime.architecture
-            val is64 = if (CortexRuntime.is64Bit) "64-bit" else "32-bit"
-            val root = Environment.getCortexRoot(ctx).absolutePath
-            val home = Environment.getHomeDir(ctx).absolutePath
-
-            val message = """
-                Architecture: $arch ($is64)
-                Cortex Root: $root
-                Home Directory: $home
-                Zero-Overhead Hook: libcortex-hook.so
-                Execution: Native Linux Kernel (No ptrace/No PRoot)
-            """.trimIndent()
-
-            AlertDialog.Builder(requireContext())
-                .setTitle("Cortex System Info")
-                .setMessage(message)
-                .setPositiveButton("OK", null)
-                .show()
         }
     }
 }
