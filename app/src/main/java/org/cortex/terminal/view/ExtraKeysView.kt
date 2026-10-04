@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -31,6 +33,21 @@ class ExtraKeysView @JvmOverloads constructor(
     private var pendingKeyAction: Runnable? = null
     private var keyDownX = 0f
     private var keyDownY = 0f
+
+    // Long-press repeat: holding an arrow key keeps sending it (cursor moves fast).
+    // First fire stays deferred (55ms, swipe-safe), repeat starts 400ms after
+    // ACTION_DOWN and ticks every 60ms until UP/CANCEL/slop/swipe.
+    private val repeatHandler = Handler(Looper.getMainLooper())
+    private var repeatStarter: Runnable? = null
+    private var repeatTicker: Runnable? = null
+    private var repeatArmedView: View? = null
+
+    companion object {
+        private const val KEY_DEFER_MS = 55L
+        private const val REPEAT_START_MS = 400L
+        private const val REPEAT_INTERVAL_MS = 60L
+        private val REPEATABLE_KEYS = setOf("←", "→", "↑", "↓")
+    }
 
     var terminalView: TerminalView? = null
         set(value) {
@@ -118,13 +135,16 @@ class ExtraKeysView @JvmOverloads constructor(
                             keyDownX = event.x
                             keyDownY = event.y
                             cancelPendingKey(v)
+                            cancelRepeat()
                             val runnable = Runnable {
                                 pendingKeyAction = null
+                                pendingKeyView = null
                                 try { action() } catch (_: Exception) {}
+                                if (label in REPEATABLE_KEYS) armRepeat(v, action)
                             }
                             pendingKeyAction = runnable
                             pendingKeyView = v
-                            v.postDelayed(runnable, 55L)
+                            v.postDelayed(runnable, KEY_DEFER_MS)
                             true
                         }
                         MotionEvent.ACTION_MOVE -> {
@@ -132,22 +152,27 @@ class ExtraKeysView @JvmOverloads constructor(
                                         kotlin.math.abs(event.y - keyDownY) > moveSlopPx
                             if (moved) {
                                 cancelPendingKey(v)
+                                cancelRepeat()
                                 v.isPressed = false
                             }
                             true
                         }
                         MotionEvent.ACTION_UP -> {
                             v.isPressed = false
-                            // Fire immediately if the tap ended before the deferral elapsed
+                            // Fire immediately if the tap ended before the deferral elapsed.
+                            // The manual run may arm repeat; UP always disarms, so taps
+                            // never repeat while holds keep ticking until release.
                             pendingKeyAction?.let { r ->
                                 cancelPendingKey(v)
                                 try { r.run() } catch (_: Exception) {}
                             }
+                            cancelRepeat()
                             true
                         }
                         MotionEvent.ACTION_CANCEL -> {
                             v.isPressed = false
                             cancelPendingKey(v)
+                            cancelRepeat()
                             true
                         }
                         else -> false
@@ -175,6 +200,40 @@ class ExtraKeysView @JvmOverloads constructor(
         pendingKeyView = null
     }
 
+    private fun armRepeat(v: View, action: () -> Any?) {
+        cancelRepeat()
+        repeatArmedView = v
+        val starter = Runnable {
+            repeatStarter = null
+            if (repeatArmedView !== v) return@Runnable
+            val tick = object : Runnable {
+                override fun run() {
+                    if (repeatArmedView !== v) return
+                    try { action() } catch (_: Exception) {}
+                    repeatTicker = this
+                    try { repeatHandler.postDelayed(this, REPEAT_INTERVAL_MS) } catch (_: Exception) {}
+                }
+            }
+            repeatTicker = tick
+            try { repeatHandler.postDelayed(tick, REPEAT_INTERVAL_MS) } catch (_: Exception) {}
+        }
+        repeatStarter = starter
+        // First fire already happened at KEY_DEFER_MS; start ticking at REPEAT_START_MS.
+        try { repeatHandler.postDelayed(starter, REPEAT_START_MS - KEY_DEFER_MS) } catch (_: Exception) {}
+    }
+
+    private fun cancelRepeat() {
+        repeatArmedView = null
+        repeatStarter?.let { s ->
+            try { repeatHandler.removeCallbacks(s) } catch (_: Exception) {}
+        }
+        repeatStarter = null
+        repeatTicker?.let { t ->
+            try { repeatHandler.removeCallbacks(t) } catch (_: Exception) {}
+        }
+        repeatTicker = null
+    }
+
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         when (ev.action) {
             MotionEvent.ACTION_DOWN -> {
@@ -191,6 +250,7 @@ class ExtraKeysView @JvmOverloads constructor(
                     if (dx < -45 * density && kotlin.math.abs(dx) > dy * 1.3f) {
                         swipeConsumed = true
                         cancelPendingKey()
+                        cancelRepeat()
                         try { onSearchToggle?.invoke() } catch (_: Exception) {}
                         return true
                     }

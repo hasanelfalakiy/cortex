@@ -53,7 +53,11 @@ static void cortex_sigsys_handler(int sig, siginfo_t *info, void *ctx) {
         if (flags & 1 /* LANDLOCK_CREATE_RULESET_VERSION */) {
             ret_val = 1; // ABI v1
         } else {
-            ret_val = 3; // Mock valid ruleset fd
+            // Never hand out a fake fd number (e.g. 3): the caller owns that
+            // fd (archive/pipe/socket) and will close() it as "the ruleset",
+            // corrupting its own fd table into EBADF cascades. Honest ENOSYS
+            // lets callers skip sandboxing, which is the standard fallback.
+            ret_val = -ENOSYS;
         }
     } else if (sys_nr == 445 /* __NR_landlock_add_rule */ ||
                sys_nr == 446 /* __NR_landlock_restrict_self */) {
@@ -639,6 +643,91 @@ int __open_2(const char *pathname, int flags) {
 
 int __openat_2(int dirfd, const char *pathname, int flags) {
     return openat(dirfd, pathname, flags);
+}
+
+// openat2/open_how local definition: avoids depending on <linux/openat2.h>,
+// which old NDK/cross headers may lack. Layout matches UAPI ver0
+// (flags, mode, resolve = 3 x __u64); extra fields are never read here.
+struct cortex_open_how {
+    uint64_t flags;
+    uint64_t mode;
+    uint64_t resolve;
+};
+#ifndef RESOLVE_BENEATH
+#define RESOLVE_BENEATH 0x08
+#endif
+#ifndef __NR_openat2
+#define __NR_openat2 437
+#endif
+#ifndef __NR_fchmodat2
+#define __NR_fchmodat2 452
+#endif
+
+// Hook openat2 (used by GNU tar 1.35+/gnulib for RESOLVE_BENEATH traversal).
+// Rewrites absolute paths like openat, then delegates; on ENOSYS (kernels
+// without openat2, e.g. Android < 5.6) emulates with plain openat instead of
+// trusting every caller to implement the fallback itself.
+int openat2(int dirfd, const char *pathname, struct cortex_open_how *how, size_t usize) {
+    static int (*orig_openat2)(int, const char *, struct cortex_open_how *, size_t) = NULL;
+    if (!orig_openat2) orig_openat2 = (int (*)(int, const char *, struct cortex_open_how *, size_t))dlsym(RTLD_NEXT, "openat2");
+    if (!pathname) {
+        errno = EFAULT;
+        return -1;
+    }
+    char exe_buf[PATH_MAX];
+    if (is_proc_self_exe(pathname)) {
+        if (g_real_exe[0] != '\0') {
+            pathname = g_real_exe;
+        } else if (handle_proc_self_exe(exe_buf, sizeof(exe_buf)) > 0) {
+            pathname = exe_buf;
+        }
+    }
+    char buf[PATH_MAX];
+    const char *target = (pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
+    if (orig_openat2) {
+        int ret = orig_openat2(dirfd, target, how, usize);
+        if (ret < 0 && errno == ENOSYS) {
+            // fall through to openat emulation below
+        } else {
+            return ret;
+        }
+    }
+    if (!how || usize < 16) {
+        errno = EINVAL;
+        return -1;
+    }
+    int flags = (int)(how->flags & 0xffffffffu);
+    mode_t mode = (mode_t)(how->mode & 07777u);
+    if (open_needs_mode(flags)) {
+        return openat(dirfd, target, flags, mode);
+    }
+    return openat(dirfd, target, flags);
+}
+
+// Hook fchmodat2 (used by GNU tar for lchmod-style symlink chmod).
+// Delegates when the libc symbol exists, otherwise emulates: symlinks cannot
+// be chmod'ed without kernel support, so skip them (return 0) like gnulib,
+// and route everything else through fchmodat.
+int fchmodat2(int dirfd, const char *pathname, mode_t mode, int flags) {
+    static int (*orig_fchmodat2)(int, const char *, mode_t, int) = NULL;
+    if (!orig_fchmodat2) orig_fchmodat2 = (int (*)(int, const char *, mode_t, int))dlsym(RTLD_NEXT, "fchmodat2");
+    if (!pathname) {
+        errno = EFAULT;
+        return -1;
+    }
+    char buf[PATH_MAX];
+    const char *target = (pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
+    if (orig_fchmodat2) {
+        int ret = orig_fchmodat2(dirfd, target, mode, flags);
+        if (ret == 0 || errno != ENOSYS) return ret;
+    }
+    if ((flags & AT_SYMLINK_NOFOLLOW) != 0) {
+        struct stat st;
+        if (fstatat(dirfd, target, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISLNK(st.st_mode)) {
+            return 0;
+        }
+    }
+    return fchmodat(dirfd, target, mode, 0);
 }
 
 
@@ -1840,7 +1929,15 @@ int mkfifoat(int dirfd, const char *pathname, mode_t mode) {
 int mknodat(int dirfd, const char *pathname, mode_t mode, dev_t dev) {
     (void)dev;
     if (S_ISREG(mode)) {
-        return openat(dirfd, pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
+        // mknod(2) returns 0 on success, never a file descriptor: close the
+        // transient fd instead of leaking one per call (tar/dpkg extract
+        // thousands of files; leaked fds exhaust the table -> EBADF noise).
+        int fd = openat(dirfd, pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
+        if (fd >= 0) {
+            close(fd);
+            return 0;
+        }
+        return -1;
     }
     if (S_ISFIFO(mode)) {
         return mkfifoat(dirfd, pathname, mode);
@@ -2201,6 +2298,18 @@ long syscall(long number, ...) {
 #ifdef __NR_close_range
     if (number == __NR_close_range) {
         return (long)close_range((unsigned int)arg1, (unsigned int)arg2, (int)arg3);
+    }
+#endif
+
+#ifdef __NR_openat2
+    if (number == __NR_openat2) {
+        return (long)openat2((int)arg1, (const char *)arg2, (struct cortex_open_how *)arg3, (size_t)arg4);
+    }
+#endif
+
+#ifdef __NR_fchmodat2
+    if (number == __NR_fchmodat2) {
+        return (long)fchmodat2((int)arg1, (const char *)arg2, (mode_t)arg3, (int)arg4);
     }
 #endif
 
