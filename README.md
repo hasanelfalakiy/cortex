@@ -4,58 +4,41 @@
 [![Telegram](https://img.shields.io/badge/Telegram-@ratzgn-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/ratzgn)
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=for-the-badge)](LICENSE)
 
-Cortex is a modern, high-performance Linux terminal application for Android powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39**.
+## What is Cortex?
 
----
-
-## What makes Cortex different?
-
-Most existing Android terminal setups suffer from two major problems:
-
-1. **Missing standard Linux libraries**: They rely on Android's custom system libraries, causing errors when compiling or running standard Linux programs.
-2. **Slow execution**: When using tools like PRoot to fake a Linux system, every single action is intercepted at the operating system level, which slows down your device and consumes extra battery.
-
-**Cortex takes a completely different approach:**
-
-- **Zero-Overhead Native Speed**: Programs talk directly to your device's processor and Linux kernel. No heavy emulation and no system-call traps.
-- **No Root Required**: Everything operates safely inside the application sandbox on standard, unrooted Android devices.
-- **Full Library Support**: Built to support standard Glibc tools and modern Linux environments natively.
+Cortex is a next-generation native Linux terminal and development powerhouse engineered for Android.  
+It delivers an authentic **Ubuntu 24.04 LTS (Noble Numbat)** environment powered by **GNU C Library (Glibc 2.39)** on unrooted devices.  
+Unlike existing solutions, Cortex operates with **ZERO virtualization, ZERO PRoot, and ZERO containers**.  
+All command-line utilities, compilers, and runtimes execute directly on your physical CPU cores and the Android Linux kernel.  
+With full APT package management, high-speed developer launchers, and a modern Material 3 interface, Cortex turns your Android device into a complete coding workstation.
 
 ---
 
 ## Features
 
-- **Ubuntu 24.04 LTS (Noble Numbat) Userland**: Full APT package management (`apt update`, `apt install`) with standard Ubuntu repositories and Glibc 2.39.
-- **Pure Native Execution**: Zero PRoot, zero chroot, and zero virtualization overhead. Direct hardware execution on Android's Linux kernel with userspace translation (`libcortex-hook.so`).
-- **CLI Browser Auto-Redirection**: Seamlessly bridges CLI auth tools (`antigravity auth login`, `gh auth login`, OAuth flows, and `xdg-open`) into Google Chrome or your default Android browser.
-- **Direct Keyboard Image Insertion**: Tap any image in Gboard or Samsung Keyboard's clipboard to save it to `/sdcard/Pictures/` and insert its file path directly into the terminal prompt.
-- **Background Service Manager**: Control services with `service`, `systemctl`, `/etc/init.d/`, and persistent background daemons via `/etc/cortex/autostart`.
-- **All-Files Storage Access**: Deep integration with Android's `MANAGE_EXTERNAL_STORAGE` to work directly across device files on `/sdcard`.
-- **High-Speed Display Engine**: Smooth text rendering with full 256-color, TrueColor, and crisp monospace typography.
-- **Convenient Keyboard Bar & Tabs**: Quick-access buttons for Esc, Tab, Ctrl, Alt, arrows, and multi-tab session management.
-- **Terminal Search**: Swipe right-to-left across the keyboard bar (or tap `FIND`) to search the full 5000-line scrollback with live hit counts and match-to-match navigation.
-- **Clickable Links**: URLs printed in the terminal are underlined and open directly in Chrome or your default Android browser with a single tap.
+- **Genuine Ubuntu 24.04 LTS & Glibc 2.39**: Run standard GNU/Linux software, compilers, and modern libraries without Android Bionic libc limitations or missing header errors.
+- **Pure Native Execution (Zero Overhead)**: No PRoot `ptrace` system call traps, no chroot, and no QEMU/KVM emulation. Enjoy 100% native CPU speed, minimal latency, and optimal battery efficiency.
+- **Full Debian/Ubuntu APT Package Manager**: Complete, zero-warning package installation (`apt update`, `apt install`) verified with official Ubuntu archive GPG keyrings and dynamic DNS.
+- **Full OpenJDK 17 JDK & JRE Runtime**: Out-of-the-box Java 17 development support (`apt install openjdk-17-jdk`) with dynamic linker library path preservation and POSIX shared memory (`/dev/shm`).
+- **High-Speed AI & Developer Launchers**: One-command instant CDN setups for OpenCode, Meta Muse Code, and Google Antigravity.
+- **Bun & Node.js Crash Prevention**: Transparent `inotify_add_watch` auto-provisioning ensures Bun-based tools like OpenCode never crash due to missing configuration directories.
+- **Modern Material 3 Terminal Interface**: Sleek dark UI, high-framerate font rendering, full 256-color & 24-bit TrueColor support, and JetBrains Mono monospace typography.
+- **2-Row Virtual Keyboard Toolbar**: Quick-access tactile keys for `ESC`, `TAB`, `CTRL`, `ALT`, arrow navigation, pipes (`|`), brackets, and symbol combinations.
+- **Integrated Terminal Search**: Swipe across the keyboard toolbar or tap `FIND` to search through 5,000 lines of scrollback buffer with real-time match counts and navigation.
+- **Clickable Links & Clipboard Image Insertion**: Underlined URLs open instantly in your default Android browser; tapping images in your keyboard clipboard automatically saves and types their file path.
+- **Multi-Session Management**: Seamlessly spawn, switch between, and manage multiple active terminal sessions from the left navigation drawer.
+- **Full Storage & Background Services**: Deep `/sdcard` device storage integration and standard background service controls via `service`, `/etc/init.d/`, and `/etc/cortex/autostart`.
 
 ---
 
-## How to Install
-
-1. Go to the **Releases** section on this repository.
-2. Download the version for your device:
-   - **Cortex-arm64-v8a-signed.apk**: For almost all modern Android phones and tablets (64-bit).
-   - **Cortex-armeabi-v7a-signed.apk**: For older 32-bit Android devices.
-3. Open the downloaded file on your Android device and tap **Install**.
-
----
-
-## How it Works
+## How It Works
 
 ```
 +-----------------------------------------------------------+
 |                      Cortex Terminal                      |
 |                                                           |
 |  +-----------------------------------------------------+  |
-|  | Modern User Interface (Tabs, Keyboard Bar, Display) |  |
+|  | Modern Material 3 UI (Sessions, Search, Keys Bar)   |  |
 |  +-----------------------------------------------------+  |
 |                            |                              |
 |  +-----------------------------------------------------+  |
@@ -67,39 +50,36 @@ Most existing Android terminal setups suffer from two major problems:
 |  +-----------------------------------------------------+  |
 |                            |                              |
 |  +-----------------------------------------------------+  |
-|  | Android Linux Kernel (Direct Hardware Execution)    |  |
+|  | Android Linux Kernel (Direct Hardware CPU Execution)|  |
 |  +-----------------------------------------------------+  |
 +-----------------------------------------------------------+
 ```
 
-1. **Native Terminal Interface**: The user interface draws text directly to the screen using your phone's graphics hardware.
-2. **Direct Kernel Execution**: Terminal commands run directly on the underlying Linux kernel with zero emulation layers.
-3. **Userspace Redirection**: A lightweight helper library redirects standard Linux paths (such as `/usr` and `/bin`) to Cortex's private directory without using slow kernel intercepts.
+1. **Direct Kernel Execution**: Cortex does not run inside a virtual machine or container. Programs execute directly on your device's real ARM64 / ARMv7 hardware threads using Android's native Linux kernel.
+2. **Userspace Redirection (`libcortex-hook.so`)**: Using an ultra-lightweight dynamic linker hook injected via `LD_PRELOAD`, standard Linux filesystem paths (`/usr`, `/bin`, `/etc`, `/tmp`) are transparently redirected to Cortex's private application space without slow operating system-level traps.
+3. **No Root Required**: All path mapping, permission polyfills, and simulated root privileges (`getuid` / `geteuid`) happen strictly in userspace, allowing full development capabilities on any unrooted Android device.
 
 ---
 
-## Building from Source
+## How to Install
 
-This project is configured with GitHub Actions. Every release is built, split into 64-bit and 32-bit packages, and signed automatically in the cloud.
-
-To build manually on your workstation:
-
-```bash
-# Build release APKs for 64-bit and 32-bit
-./gradlew assembleRelease
-```
+1. Navigate to the [Releases](https://github.com/ssfuisu/cortex/releases) section of this repository.
+2. Download the APK corresponding to your device architecture:
+   - **`Cortex-arm64-v8a-signed.apk`**: For all modern 64-bit Android smartphones and tablets (recommended).
+   - **`Cortex-armeabi-v7a-signed.apk`**: For legacy 32-bit Android devices.
+3. Install the APK and grant storage permissions when prompted.
 
 ---
 
-## Contact & Community
+## Community & Support
 
-Have feedback, questions, or feature requests? Reach out directly:
+Have feedback, questions, or ideas for new features? We'd love to hear from you:
 
-- **Telegram**: [@ratzgn](https://t.me/ratzgn)
-- **GitHub Issues**: [Report an Issue / Feature Request](https://github.com/ssfuisu/cortex/issues)
+- **GitHub Issues**: Open a bug report or feature request on [GitHub Issues](https://github.com/ssfuisu/cortex/issues).
+- **Telegram**: Chat directly with the developer on Telegram: [@ratzgn](https://t.me/ratzgn).
 
 ---
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0.
+This project is licensed under the **Apache License, Version 2.0**. See the [LICENSE](LICENSE) file for full details.
