@@ -601,9 +601,9 @@ exit 0
 EOFMP
 chmod 0755 extra-rootfs/usr/local/bin/mountpoint
 
-mkdir -p extra-rootfs/tmp/shm extra-rootfs/dev
+rm -rf extra-rootfs/dev 2>/dev/null || true
+mkdir -p extra-rootfs/tmp/shm
 chmod 1777 extra-rootfs/tmp/shm 2>/dev/null || true
-ln -sf /tmp/shm extra-rootfs/dev/shm 2>/dev/null || true
 
 mkdir -p extra-rootfs/etc/ssl/certs/java extra-rootfs/var/lib/ca-certificates-java extra-rootfs/etc/.java/.systemPrefs
 mkdir -p extra-rootfs/etc/gnupg extra-rootfs/home/.gnupg extra-rootfs/root/.gnupg
