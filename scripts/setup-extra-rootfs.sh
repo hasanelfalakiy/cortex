@@ -390,7 +390,7 @@ done
 [ -z "$CORTEX_SHELL" ] && CORTEX_SHELL="/system/bin/sh"
 
 CORTEX_PATH="$CORTEX_ROOT/usr/local/sbin:$CORTEX_ROOT/usr/sbin:$CORTEX_ROOT/sbin:$CORTEX_ROOT/usr/local/bin:$CORTEX_ROOT/bin:$CORTEX_ROOT/usr/bin:/system/bin:/system/xbin"
-CORTEX_LD="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib:$CORTEX_ROOT/usr/lib/systemd:$CORTEX_ROOT/lib/systemd"
+CORTEX_LD="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib:$CORTEX_ROOT/usr/lib/systemd:$CORTEX_ROOT/lib/systemd:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu/systemd:$CORTEX_ROOT/lib/aarch64-linux-gnu/systemd:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf/systemd:$CORTEX_ROOT/lib/arm-linux-gnueabihf/systemd"
 CORTEX_PRELOAD=""
 if [ -f "$CORTEX_ROOT/usr/lib/libcortex-hook.so" ]; then
   CORTEX_PRELOAD="$CORTEX_ROOT/usr/lib/libcortex-hook.so"
@@ -528,7 +528,7 @@ if [ -z "$CORTEX_ROOT" ]; then
     fi
 fi
 if [ -n "$CORTEX_ROOT" ]; then
-    export LD_LIBRARY_PATH="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib:$CORTEX_ROOT/usr/lib/systemd:$CORTEX_ROOT/lib/systemd"
+    export LD_LIBRARY_PATH="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib:$CORTEX_ROOT/usr/lib/systemd:$CORTEX_ROOT/lib/systemd:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu/systemd:$CORTEX_ROOT/lib/aarch64-linux-gnu/systemd:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf/systemd:$CORTEX_ROOT/lib/arm-linux-gnueabihf/systemd"
     export LD_PRELOAD="$CORTEX_ROOT/usr/lib/libcortex-hook.so"
 fi
 export PATH="/home/.opencode/bin:/home/.local/bin:$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
@@ -543,11 +543,22 @@ if [ ! -f extra-rootfs/etc/machine-id ]; then
 fi
 cp extra-rootfs/etc/machine-id extra-rootfs/var/lib/dbus/machine-id 2>/dev/null || true
 
-for p in extra-rootfs/usr/sbin extra-rootfs/usr/bin; do
+for p in extra-rootfs/usr/sbin extra-rootfs/usr/bin extra-rootfs/bin extra-rootfs/sbin; do
     mkdir -p "$p"
     printf '#!/bin/sh\nexit 0\n' > "$p/systemd-machine-id-setup"
     chmod 0755 "$p/systemd-machine-id-setup"
 done
+
+mkdir -p extra-rootfs/var/lib/dpkg
+if [ ! -f extra-rootfs/var/lib/dpkg/diversions ]; then
+    touch extra-rootfs/var/lib/dpkg/diversions
+fi
+for div_path in /usr/bin/systemd-machine-id-setup /bin/systemd-machine-id-setup /usr/sbin/systemd-machine-id-setup; do
+    if ! grep -q "^$div_path$" extra-rootfs/var/lib/dpkg/diversions 2>/dev/null; then
+        printf '%s\n%s.distrib\n:\n' "$div_path" "$div_path" >> extra-rootfs/var/lib/dpkg/diversions
+    fi
+done
+chmod 0644 extra-rootfs/var/lib/dpkg/diversions
 
 chmod 0755 extra-rootfs/usr/local/bin/*
 echo "extra-rootfs service, browser, root tools, and muse prepared successfully."

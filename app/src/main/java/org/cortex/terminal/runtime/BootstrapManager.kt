@@ -1882,6 +1882,49 @@ object BootstrapManager {
                     machineId.copyTo(dbusMachineId, overwrite = true)
                 }
             }
+
+            // Ensure dummy exit 0 scripts for systemd-machine-id-setup across bin directories
+            val scriptContent = "#!/bin/sh\nexit 0\n"
+            val targetBins = listOf(
+                File(root, "usr/bin/systemd-machine-id-setup"),
+                File(root, "usr/sbin/systemd-machine-id-setup"),
+                File(root, "bin/systemd-machine-id-setup"),
+                File(root, "sbin/systemd-machine-id-setup")
+            )
+            for (tb in targetBins) {
+                try {
+                    tb.parentFile?.mkdirs()
+                    tb.writeText(scriptContent)
+                    tb.setReadable(true, false)
+                    tb.setExecutable(true, false)
+                    try { android.system.Os.chmod(tb.absolutePath, 493) } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
+
+            // Ensure dpkg diversions prevent systemd package updates from overwriting dummy scripts
+            val dpkgDir = File(root, "var/lib/dpkg")
+            dpkgDir.mkdirs()
+            val diversionsFile = File(dpkgDir, "diversions")
+            val divEntries = listOf(
+                "/usr/bin/systemd-machine-id-setup",
+                "/bin/systemd-machine-id-setup",
+                "/usr/sbin/systemd-machine-id-setup"
+            )
+            val currentDivText = if (diversionsFile.exists()) diversionsFile.readText() else ""
+            val newDivBuilder = StringBuilder(currentDivText)
+            for (p in divEntries) {
+                if (!currentDivText.contains(p)) {
+                    if (newDivBuilder.isNotEmpty() && !newDivBuilder.endsWith("\n")) {
+                        newDivBuilder.append("\n")
+                    }
+                    newDivBuilder.append("$p\n$p.distrib\n:\n")
+                }
+            }
+            if (newDivBuilder.toString() != currentDivText) {
+                diversionsFile.writeText(newDivBuilder.toString())
+                diversionsFile.setReadable(true, false)
+                try { android.system.Os.chmod(diversionsFile.absolutePath, 420) } catch (_: Exception) {}
+            }
         } catch (e: Exception) {
             android.util.Log.e("BootstrapManager", "Failed to ensure machine-id", e)
         }
@@ -1972,7 +2015,7 @@ object BootstrapManager {
                 "        export CORTEX_ROOT=\"" + root.absolutePath + "\"\n" +
                 "    fi\n" +
                 "fi\n" +
-                "export LD_LIBRARY_PATH=\"\$CORTEX_ROOT/lib:\$CORTEX_ROOT/usr/lib:\$CORTEX_ROOT/lib/aarch64-linux-gnu:\$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:\$CORTEX_ROOT/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/local/lib:\$CORTEX_ROOT/usr/lib/systemd:\$CORTEX_ROOT/lib/systemd\"\n" +
+                "export LD_LIBRARY_PATH=\"\$CORTEX_ROOT/lib:\$CORTEX_ROOT/usr/lib:\$CORTEX_ROOT/lib/aarch64-linux-gnu:\$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:\$CORTEX_ROOT/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/local/lib:\$CORTEX_ROOT/usr/lib/systemd:\$CORTEX_ROOT/lib/systemd:\$CORTEX_ROOT/usr/lib/aarch64-linux-gnu/systemd:\$CORTEX_ROOT/lib/aarch64-linux-gnu/systemd:\$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf/systemd:\$CORTEX_ROOT/lib/arm-linux-gnueabihf/systemd\"\n" +
                 "export LD_PRELOAD=\"\$CORTEX_ROOT/usr/lib/libcortex-hook.so\"\n" +
                 "export PATH=\"/home/.opencode/bin:\$HOME/.opencode/bin:/home/.local/bin:\$HOME/.local/bin:\$PATH\"\n"
             envSh.writeText(envContent)
@@ -2470,7 +2513,7 @@ done
 [ -z "${'$'}CORTEX_SHELL" ] && CORTEX_SHELL="/system/bin/sh"
 
 CORTEX_PATH="${'$'}CORTEX_ROOT/usr/local/sbin:${'$'}CORTEX_ROOT/usr/sbin:${'$'}CORTEX_ROOT/sbin:${'$'}CORTEX_ROOT/usr/local/bin:${'$'}CORTEX_ROOT/bin:${'$'}CORTEX_ROOT/usr/bin:/system/bin:/system/xbin"
-CORTEX_LD="${'$'}CORTEX_ROOT/lib:${'$'}CORTEX_ROOT/usr/lib:${'$'}CORTEX_ROOT/lib/aarch64-linux-gnu:${'$'}CORTEX_ROOT/usr/lib/aarch64-linux-gnu:${'$'}CORTEX_ROOT/lib/arm-linux-gnueabihf:${'$'}CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:${'$'}CORTEX_ROOT/usr/local/lib:${'$'}CORTEX_ROOT/usr/lib/systemd:${'$'}CORTEX_ROOT/lib/systemd"
+CORTEX_LD="${'$'}CORTEX_ROOT/lib:${'$'}CORTEX_ROOT/usr/lib:${'$'}CORTEX_ROOT/lib/aarch64-linux-gnu:${'$'}CORTEX_ROOT/usr/lib/aarch64-linux-gnu:${'$'}CORTEX_ROOT/lib/arm-linux-gnueabihf:${'$'}CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:${'$'}CORTEX_ROOT/usr/local/lib:${'$'}CORTEX_ROOT/usr/lib/systemd:${'$'}CORTEX_ROOT/lib/systemd:${'$'}CORTEX_ROOT/usr/lib/aarch64-linux-gnu/systemd:${'$'}CORTEX_ROOT/lib/aarch64-linux-gnu/systemd:${'$'}CORTEX_ROOT/usr/lib/arm-linux-gnueabihf/systemd:${'$'}CORTEX_ROOT/lib/arm-linux-gnueabihf/systemd"
 CORTEX_PRELOAD=""
 if [ -f "${'$'}CORTEX_ROOT/usr/lib/libcortex-hook.so" ]; then
     CORTEX_PRELOAD="${'$'}CORTEX_ROOT/usr/lib/libcortex-hook.so"

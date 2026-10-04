@@ -2253,8 +2253,8 @@ static char **prepare_cortex_env(char *const envp[], const char *real_exe) {
     if (!has_ld_library_path && g_cortex_root[0] != '\0') {
         char *str = malloc(PATH_MAX * 4);
         if (str) {
-            snprintf(str, PATH_MAX * 4, "LD_LIBRARY_PATH=%s/lib:%s/usr/lib:%s/lib/aarch64-linux-gnu:%s/usr/lib/aarch64-linux-gnu:%s/lib/arm-linux-gnueabihf:%s/usr/lib/arm-linux-gnueabihf:%s/usr/local/lib:%s/usr/lib/systemd:%s/lib/systemd",
-                     g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root);
+            snprintf(str, PATH_MAX * 4, "LD_LIBRARY_PATH=%s/lib:%s/usr/lib:%s/lib/aarch64-linux-gnu:%s/usr/lib/aarch64-linux-gnu:%s/lib/arm-linux-gnueabihf:%s/usr/lib/arm-linux-gnueabihf:%s/usr/local/lib:%s/usr/lib/systemd:%s/lib/systemd:%s/usr/lib/aarch64-linux-gnu/systemd:%s/lib/aarch64-linux-gnu/systemd:%s/usr/lib/arm-linux-gnueabihf/systemd:%s/lib/arm-linux-gnueabihf/systemd",
+                     g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root, g_cortex_root);
             new_env[dst++] = str;
         }
     }
@@ -2443,17 +2443,24 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
 
     init_cortex_hook();
 
+    const char *f_base = (filename != NULL) ? strrchr(filename, '/') : NULL;
+    f_base = (f_base != NULL) ? f_base + 1 : (filename != NULL ? filename : "");
+
     const char *prog_name = strrchr(target, '/');
     prog_name = (prog_name != NULL) ? prog_name + 1 : target;
 
     // Intercept utilities that fail or cause issues in unprivileged Android environment
-    if (strcmp(prog_name, "ldconfig") == 0 ||
+    if (strcmp(f_base, "ldconfig") == 0 ||
+        strcmp(f_base, "ldconfig.real") == 0 ||
+        strcmp(f_base, "systemd-machine-id-setup") == 0 ||
+        strcmp(f_base, "start-stop-daemon") == 0 ||
+        strcmp(prog_name, "ldconfig") == 0 ||
         strcmp(prog_name, "ldconfig.real") == 0 ||
         strcmp(prog_name, "systemd-machine-id-setup") == 0 ||
         strcmp(prog_name, "start-stop-daemon") == 0) {
         _exit(0);
     }
-    if (strcmp(prog_name, "policy-rc.d") == 0) {
+    if (strcmp(f_base, "policy-rc.d") == 0 || strcmp(prog_name, "policy-rc.d") == 0) {
         _exit(101);
     }
 
@@ -2785,10 +2792,17 @@ int posix_spawn(pid_t *pid, const char *path,
 
     init_cortex_hook();
 
+    const char *f_base = (path != NULL) ? strrchr(path, '/') : NULL;
+    f_base = (f_base != NULL) ? f_base + 1 : (path != NULL ? path : "");
+
     const char *prog_name = strrchr(target, '/');
     prog_name = (prog_name != NULL) ? prog_name + 1 : target;
 
-    if (strcmp(prog_name, "ldconfig") == 0 ||
+    if (strcmp(f_base, "ldconfig") == 0 ||
+        strcmp(f_base, "ldconfig.real") == 0 ||
+        strcmp(f_base, "systemd-machine-id-setup") == 0 ||
+        strcmp(f_base, "start-stop-daemon") == 0 ||
+        strcmp(prog_name, "ldconfig") == 0 ||
         strcmp(prog_name, "ldconfig.real") == 0 ||
         strcmp(prog_name, "systemd-machine-id-setup") == 0 ||
         strcmp(prog_name, "start-stop-daemon") == 0) {
@@ -2801,7 +2815,7 @@ int posix_spawn(pid_t *pid, const char *path,
         }
         return errno;
     }
-    if (strcmp(prog_name, "policy-rc.d") == 0) {
+    if (strcmp(f_base, "policy-rc.d") == 0 || strcmp(prog_name, "policy-rc.d") == 0) {
         pid_t child = fork();
         if (child == 0) {
             _exit(101);

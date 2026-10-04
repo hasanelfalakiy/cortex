@@ -146,7 +146,12 @@ jobs:
           printf '#!/bin/sh\nexit 101\n' > extra-rootfs/usr/sbin/policy-rc.d
           printf '#!/bin/sh\nexit 0\n' > extra-rootfs/usr/sbin/ldconfig
           printf '#!/bin/sh\nexit 0\n' > extra-rootfs/usr/sbin/start-stop-daemon
+          mkdir -p extra-rootfs/usr/sbin extra-rootfs/usr/bin extra-rootfs/bin extra-rootfs/sbin
           printf '#!/bin/sh\nexit 0\n' > extra-rootfs/usr/sbin/systemd-machine-id-setup
+          printf '#!/bin/sh\nexit 0\n' > extra-rootfs/usr/bin/systemd-machine-id-setup
+          printf '#!/bin/sh\nexit 0\n' > extra-rootfs/bin/systemd-machine-id-setup
+          printf '#!/bin/sh\nexit 0\n' > extra-rootfs/sbin/systemd-machine-id-setup
+          chmod 0755 extra-rootfs/usr/sbin/systemd-machine-id-setup extra-rootfs/usr/bin/systemd-machine-id-setup extra-rootfs/bin/systemd-machine-id-setup extra-rootfs/sbin/systemd-machine-id-setup
           mkdir -p extra-rootfs/boot extra-rootfs/media extra-rootfs/mnt extra-rootfs/srv extra-rootfs/opt extra-rootfs/run extra-rootfs/tmp
           chmod 0755 extra-rootfs/boot extra-rootfs/media extra-rootfs/mnt extra-rootfs/srv extra-rootfs/opt extra-rootfs/usr/sbin/*
           printf 'root:x:0:\ndaemon:x:1:\ncortex:x:0:\n' > extra-rootfs/etc/group
@@ -329,7 +334,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.24.74"
+          VERSION="v1.24.75"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
           fi
@@ -340,28 +345,16 @@ jobs:
           git push --delete origin "$VERSION" 2>/dev/null || true
 
           cat << 'EOFNOTES' > release-notes.md
-          ### Cortex Release v1.24.74 — APT GPG Signing Key Fix, OpenCode & Muse Code Support, Animated Search Slide
+          ### Cortex Release v1.24.75 — Package Installation Fix (systemd & OpenJDK-17) & Multiarch Systemd Library Paths
 
           Cortex turns your Android device into a complete, native development powerhouse powered by **Ubuntu 24.04 LTS (Noble Numbat)** and **Glibc 2.39** — with **ZERO virtualization, ZERO PRoot, and ZERO containers**.
 
-          #### What's New in v1.24.74:
-          - **APT GPG Signing Key (NO_PUBKEY 871920D1991BC93C) Fix**:
-            - Hooked fortified libc file operations (`__open64_2`, `__openat64_2`, `open64`, `openat64`) ensuring glibc fortified calls never bypass Cortex path rewriting.
-            - Added `--preload <hook_so>` injection to dynamic linker calls in `cortex-hook.c` and `cortex-pty.c` to guarantee `libcortex-hook.so` is loaded into all child processes including `gpgv`.
-            - Added automatic argument rewriting for `gpgv` invocations so temporary keyrings (`/tmp/apt.XXXXXX.gpg`) and repository keys (`/usr/share/keyrings/...`) map transparently into the Cortex rootfs.
-            - Fully eliminates `NO_PUBKEY 871920D1991BC93C` signature warnings on `noble`, `noble-updates`, `noble-backports`, and `noble-security`.
-          - **OpenCode CLI Out-of-the-Box Support**:
-            - Added `~/.opencode/bin` and `/home/.opencode/bin` to global default `PATH` across Android runtime, `/etc/profile.d/00-env.sh`, and `/etc/profile.d/01cortex.sh`.
-            - Added `/usr/local/bin/opencode` wrapper script for instant execution regardless of installation method.
-          - **Meta Muse Code Support & Static Binary Direct Execution**:
-            - Implemented ELF program header inspection (`has_pt_interp`) in `cortex-hook.c` and `cortex-pty.c` to distinguish statically linked binaries (`PT_INTERP: None`) from dynamic ones.
-            - Statically linked executables (such as Meta Muse Code `muse-bin-*`) now bypass glibc `ld.so` and execute directly via native Linux kernel execution, eliminating dynamic linker crash errors.
-            - Added `/usr/local/bin/muse` wrapper script.
-          - **Animated Slide Transition for Virtual Keys & Terminal Search Bar**:
-            - Unified the virtual keys toolbar and terminal search bar inside a shared 76dp bottom container.
-            - Swiping right-to-left across the virtual keys toolbar smoothly slides the keys off-screen to the left while sliding the terminal search bar in from the right with a 220ms decelerated transition.
-            - Swiping left-to-right across the search bar (or tapping the close button / back) smoothly slides the search bar out to the right and brings the virtual keys back in from the left.
-            - Added touch deferral and movement cancellation so horizontal swipes across the toolbar never trigger accidental keystrokes.
+          #### What's New in v1.24.75:
+          - **Package Installation Fix (systemd / OpenJDK-17 / Issue #3)**:
+            - Resolved `systemd-machine-id-setup: cannot open shared object file: libsystemd-shared-255.so` which previously blocked `systemd.postinst` and interrupted installations of packages like `openjdk-17-jdk`, `default-jre`, `avahi`, `dbus`, and other core utilities.
+            - Added multiarch systemd private library directories (`/usr/lib/aarch64-linux-gnu/systemd`, `/lib/aarch64-linux-gnu/systemd`, `/usr/lib/arm-linux-gnueabihf/systemd`, `/lib/arm-linux-gnueabihf/systemd`) to global `LD_LIBRARY_PATH` across Android runtime, `cortex-hook.c`, `BootstrapManager.kt`, and profile scripts.
+            - Established persistent `dpkg-divert` rules for `/usr/bin/systemd-machine-id-setup`, `/bin/systemd-machine-id-setup`, and `/usr/sbin/systemd-machine-id-setup` ensuring package updates never overwrite safe exit-0 shims.
+            - Hardened `cortex-hook.c` `execve` and `posix_spawn` hooks to intercept `systemd-machine-id-setup`, `ldconfig`, `start-stop-daemon`, and `policy-rc.d` whether invoked via absolute path, relative path, or basename.
 
           #### Included Packages & Assets:
           - `Cortex-arm64-v8a-signed.apk` (64-bit ARM)
