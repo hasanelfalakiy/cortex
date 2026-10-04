@@ -329,7 +329,7 @@ object BootstrapManager {
         ensureEssentialBinaries(root, home)
     }
 
-    const val CURRENT_BOOTSTRAP_VERSION = 12473
+    const val CURRENT_BOOTSTRAP_VERSION = 12523
 
     fun hasDynamicLinker(root: File): Boolean {
         val candidates = listOf(
@@ -431,6 +431,16 @@ object BootstrapManager {
                     ensureKeyrings(root, context)
                     ensureAptSandbox(root)
                     ensureUbuntuSources(root)
+                    cleanupAptArtifacts(root)
+                    // Clear any corrupted or partial package lists from prior interrupted runs
+                    try {
+                        File(root, "var/lib/apt/lists").listFiles()?.forEach { f ->
+                            if (f.isFile && f.name.endsWith("_Packages")) {
+                                f.delete()
+                            }
+                        }
+                        File(root, "var/lib/apt/lists/partial").listFiles()?.forEach { it.delete() }
+                    } catch (e: Exception) {}
                     ensureMachineId(root)
                     ensureEssentialBinaries(root, Environment.getHomeDir(context))
                     ensureDynamicLinkerSymlinks(root)
@@ -989,7 +999,7 @@ object BootstrapManager {
                 "Acquire::AllowInsecureRepositories \"true\";\n" +
                 "Acquire::AllowDowngradeToInsecureRepositories \"true\";\n" +
                 "APT::Get::AllowUnauthenticated \"true\";\n" +
-                "Dir::Etc::trusted \"/usr/share/keyrings/ubuntu-archive-keyring.gpg\";\n" +
+                "Dir::Etc::trusted \"\";\n" +
                 "Dir::Etc::trustedparts \"\";\n" +
                 "Dir::dpkg::cputable \"/usr/share/dpkg/cputable\";\n" +
                 "Dir::dpkg::tupletable \"/usr/share/dpkg/tupletable\";\n" +
@@ -1156,13 +1166,11 @@ object BootstrapManager {
                 "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
                 "Suites: noble noble-updates noble-backports\n" +
                 "Components: main restricted universe multiverse\n" +
-                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" +
                 "Trusted: yes\n\n" +
                 "Types: deb\n" +
                 "URIs: http://ports.ubuntu.com/ubuntu-ports/\n" +
                 "Suites: noble-security\n" +
                 "Components: main restricted universe multiverse\n" +
-                "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" +
                 "Trusted: yes\n"
             )
             ubuntuSources.setReadable(true, false)
@@ -1418,21 +1426,46 @@ object BootstrapManager {
                 }
             }
 
-            // Clean any corrupted MergeList package lists missing the "Package:" header
+            // Clean any corrupted MergeList package lists missing the "Package:" header or truncated
             val listsDir = File(root, "var/lib/apt/lists")
             if (listsDir.exists() && listsDir.isDirectory) {
                 listsDir.listFiles()?.forEach { file ->
                     if (file.isFile && file.name.endsWith("_Packages")) {
+                        var isCorrupted = false
                         try {
-                            val sample = file.inputStream().use {
-                                val buf = ByteArray(2048)
-                                val r = it.read(buf)
-                                if (r > 0) String(buf, 0, r) else ""
-                            }
-                            if (!sample.contains("Package:")) {
-                                file.delete()
+                            file.bufferedReader().use { reader ->
+                                var inSection = false
+                                var hasPackageHeader = false
+                                var line: String?
+                                while (reader.readLine().also { line = it } != null) {
+                                    val l = line!!
+                                    if (l.isEmpty()) {
+                                        if (inSection && !hasPackageHeader) {
+                                            isCorrupted = true
+                                            break
+                                        }
+                                        inSection = false
+                                        hasPackageHeader = false
+                                    } else {
+                                        if (!inSection) {
+                                            inSection = true
+                                            if (l.startsWith("Package:")) {
+                                                hasPackageHeader = true
+                                            } else {
+                                                isCorrupted = true
+                                                break
+                                            }
+                                        }
+                                    }
+                                }
+                                if (inSection && !hasPackageHeader) {
+                                    isCorrupted = true
+                                }
                             }
                         } catch (e: Exception) {
+                            isCorrupted = true
+                        }
+                        if (isCorrupted) {
                             file.delete()
                         }
                     }
