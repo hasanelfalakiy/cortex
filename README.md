@@ -4,6 +4,12 @@
 [![Telegram](https://img.shields.io/badge/Telegram-@ratzgn-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/ratzgn)
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=for-the-badge)](LICENSE)
 
+<p align="center">
+  <img src="docs/screenshots/cortex-neofetch.jpg" width="31%" alt="Cortex Terminal Neofetch" />
+  <img src="docs/screenshots/cortex-sessions.jpg" width="31%" alt="Sessions Drawer" />
+  <img src="docs/screenshots/cortex-keyboard.jpg" width="31%" alt="Keyboard & Virtual Keys" />
+</p>
+
 ## What is Cortex?
 
 Cortex is a next-generation native Linux terminal and development powerhouse engineered for Android.  

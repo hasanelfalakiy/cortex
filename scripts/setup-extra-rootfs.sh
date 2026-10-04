@@ -632,19 +632,24 @@ fi
 cp extra-rootfs/etc/machine-id extra-rootfs/var/lib/dbus/machine-id 2>/dev/null || true
 
 rm -rf extra-rootfs/bin extra-rootfs/sbin 2>/dev/null || true
+MAINT_TOOLS="systemd-machine-id-setup systemd-sysusers systemd-tmpfiles mandb update-mime-database update-desktop-database install-info install-sgmlcatalog"
 for p in extra-rootfs/usr/sbin extra-rootfs/usr/bin; do
     mkdir -p "$p"
-    for tool in systemd-machine-id-setup systemd-sysusers systemd-tmpfiles; do
+    for tool in $MAINT_TOOLS; do
         printf '#!/bin/sh\nexit 0\n' > "$p/$tool"
         chmod 0755 "$p/$tool"
     done
 done
 
+# Pre-seed man-db auto-update disabled to prevent background re-indexing
+mkdir -p extra-rootfs/var/lib/man-db extra-rootfs/var/cache/man
+rm -f extra-rootfs/var/lib/man-db/auto-update
+
 mkdir -p extra-rootfs/var/lib/dpkg
 if [ ! -f extra-rootfs/var/lib/dpkg/diversions ]; then
     touch extra-rootfs/var/lib/dpkg/diversions
 fi
-for tool in systemd-machine-id-setup systemd-sysusers systemd-tmpfiles; do
+for tool in $MAINT_TOOLS; do
     for base in /usr/bin /bin /usr/sbin /sbin; do
         div_path="$base/$tool"
         if ! grep -q "^$div_path$" extra-rootfs/var/lib/dpkg/diversions 2>/dev/null; then

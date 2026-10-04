@@ -2180,6 +2180,125 @@ long syscall(long number, ...) {
     }
 #endif
 
+#if defined(__NR_setresuid)
+    if (number == __NR_setresuid) return 0;
+#endif
+#if defined(__NR_setresuid32)
+    if (number == __NR_setresuid32) return 0;
+#endif
+#if defined(__NR_setresgid)
+    if (number == __NR_setresgid) return 0;
+#endif
+#if defined(__NR_setresgid32)
+    if (number == __NR_setresgid32) return 0;
+#endif
+#if defined(__NR_setuid)
+    if (number == __NR_setuid) return 0;
+#endif
+#if defined(__NR_setuid32)
+    if (number == __NR_setuid32) return 0;
+#endif
+#if defined(__NR_setgid)
+    if (number == __NR_setgid) return 0;
+#endif
+#if defined(__NR_setgid32)
+    if (number == __NR_setgid32) return 0;
+#endif
+#if defined(__NR_setreuid)
+    if (number == __NR_setreuid) return 0;
+#endif
+#if defined(__NR_setreuid32)
+    if (number == __NR_setreuid32) return 0;
+#endif
+#if defined(__NR_setregid)
+    if (number == __NR_setregid) return 0;
+#endif
+#if defined(__NR_setregid32)
+    if (number == __NR_setregid32) return 0;
+#endif
+#if defined(__NR_setgroups)
+    if (number == __NR_setgroups) return 0;
+#endif
+#if defined(__NR_setgroups32)
+    if (number == __NR_setgroups32) return 0;
+#endif
+#if defined(__NR_setfsuid)
+    if (number == __NR_setfsuid) return 0;
+#endif
+#if defined(__NR_setfsuid32)
+    if (number == __NR_setfsuid32) return 0;
+#endif
+#if defined(__NR_setfsgid)
+    if (number == __NR_setfsgid) return 0;
+#endif
+#if defined(__NR_setfsgid32)
+    if (number == __NR_setfsgid32) return 0;
+#endif
+#if defined(__NR_getuid)
+    if (number == __NR_getuid) return 0;
+#endif
+#if defined(__NR_getuid32)
+    if (number == __NR_getuid32) return 0;
+#endif
+#if defined(__NR_geteuid)
+    if (number == __NR_geteuid) return 0;
+#endif
+#if defined(__NR_geteuid32)
+    if (number == __NR_geteuid32) return 0;
+#endif
+#if defined(__NR_getgid)
+    if (number == __NR_getgid) return 0;
+#endif
+#if defined(__NR_getgid32)
+    if (number == __NR_getgid32) return 0;
+#endif
+#if defined(__NR_getegid)
+    if (number == __NR_getegid) return 0;
+#endif
+#if defined(__NR_getegid32)
+    if (number == __NR_getegid32) return 0;
+#endif
+#if defined(__NR_getresuid) || defined(__NR_getresuid32)
+    #if defined(__NR_getresuid)
+    if (number == __NR_getresuid)
+    #endif
+    #if defined(__NR_getresuid32)
+    #if defined(__NR_getresuid)
+    ||
+    #endif
+    number == __NR_getresuid32
+    #endif
+    {
+        uid_t *ruid = (uid_t *)arg1;
+        uid_t *euid = (uid_t *)arg2;
+        uid_t *suid = (uid_t *)arg3;
+        if (ruid) *ruid = 0;
+        if (euid) *euid = 0;
+        if (suid) *suid = 0;
+        return 0;
+    }
+#endif
+#if defined(__NR_getresgid) || defined(__NR_getresgid32)
+    #if defined(__NR_getresgid)
+    if (number == __NR_getresgid)
+    #endif
+    #if defined(__NR_getresgid32)
+    #if defined(__NR_getresgid)
+    ||
+    #endif
+    number == __NR_getresgid32
+    #endif
+    {
+        gid_t *rgid = (gid_t *)arg1;
+        gid_t *egid = (gid_t *)arg2;
+        gid_t *sgid = (gid_t *)arg3;
+        if (rgid) *rgid = 0;
+        if (egid) *egid = 0;
+        if (sgid) *sgid = 0;
+        return 0;
+    }
+#endif
+
     static long (*orig_syscall)(long, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long) = NULL;
     if (!orig_syscall) {
         orig_syscall = (long (*)(long, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))dlsym(RTLD_NEXT, "syscall");
@@ -2595,12 +2714,24 @@ int execve(const char *filename, char *const argv[], char *const envp[]) {
         strcmp(f_base, "systemd-sysusers") == 0 ||
         strcmp(f_base, "systemd-tmpfiles") == 0 ||
         strcmp(f_base, "start-stop-daemon") == 0 ||
+        strcmp(f_base, "mandb") == 0 ||
+        strcmp(f_base, "mandb.real") == 0 ||
+        strcmp(f_base, "update-mime-database") == 0 ||
+        strcmp(f_base, "update-desktop-database") == 0 ||
+        strcmp(f_base, "install-info") == 0 ||
+        strcmp(f_base, "install-sgmlcatalog") == 0 ||
         strcmp(prog_name, "ldconfig") == 0 ||
         strcmp(prog_name, "ldconfig.real") == 0 ||
         strcmp(prog_name, "systemd-machine-id-setup") == 0 ||
         strcmp(prog_name, "systemd-sysusers") == 0 ||
         strcmp(prog_name, "systemd-tmpfiles") == 0 ||
-        strcmp(prog_name, "start-stop-daemon") == 0) {
+        strcmp(prog_name, "start-stop-daemon") == 0 ||
+        strcmp(prog_name, "mandb") == 0 ||
+        strcmp(prog_name, "mandb.real") == 0 ||
+        strcmp(prog_name, "update-mime-database") == 0 ||
+        strcmp(prog_name, "update-desktop-database") == 0 ||
+        strcmp(prog_name, "install-info") == 0 ||
+        strcmp(prog_name, "install-sgmlcatalog") == 0) {
         _exit(0);
     }
     if (strcmp(f_base, "mountpoint") == 0 || strcmp(prog_name, "mountpoint") == 0) {
