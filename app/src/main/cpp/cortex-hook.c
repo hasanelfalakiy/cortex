@@ -29,6 +29,7 @@
 #include <sys/time.h>
 #include <pwd.h>
 #include <grp.h>
+#include <pthread.h>
 
 // Intercept SECCOMP blocked syscalls (SIGSYS), resolve sandbox/landlock gracefully, and advance PC
 static void cortex_sigsys_handler(int sig, siginfo_t *info, void *ctx) {
