@@ -40,28 +40,15 @@ static void cortex_sigsys_handler(int sig, siginfo_t *info, void *ctx) {
     long ret_val = -ENOSYS;
 
     // Handle Landlock, seccomp, namespaces, and clone3 traps on Android
-    if (sys_nr == 444 /* __NR_landlock_create_ruleset */) {
-#if defined(__aarch64__)
-        uint32_t flags = (uint32_t)uctx->uc_mcontext.regs[2];
-#elif defined(__arm__)
-        uint32_t flags = (uint32_t)uctx->uc_mcontext.arm_r2;
-#elif defined(__x86_64__) && defined(REG_RDX)
-        uint32_t flags = (uint32_t)uctx->uc_mcontext.gregs[REG_RDX];
-#else
-        uint32_t flags = 0;
-#endif
-        if (flags & 1 /* LANDLOCK_CREATE_RULESET_VERSION */) {
-            ret_val = 1; // ABI v1
-        } else {
-            // Never hand out a fake fd number (e.g. 3): the caller owns that
-            // fd (archive/pipe/socket) and will close() it as "the ruleset",
-            // corrupting its own fd table into EBADF cascades. Honest ENOSYS
-            // lets callers skip sandboxing, which is the standard fallback.
-            ret_val = -ENOSYS;
-        }
-    } else if (sys_nr == 445 /* __NR_landlock_add_rule */ ||
-               sys_nr == 446 /* __NR_landlock_restrict_self */) {
-        ret_val = 0;
+    if (sys_nr == 444 /* __NR_landlock_create_ruleset */ ||
+        sys_nr == 445 /* __NR_landlock_add_rule */ ||
+        sys_nr == 446 /* __NR_landlock_restrict_self */) {
+        // Honest ENOSYS for all Landlock syscalls: returning ABI version 1 causes
+        // callers to assume Landlock is active, try to create rulesets, and either
+        // fail with unexpected errors or close fake fds causing EBADF cascades.
+        // Returning -ENOSYS allows callers (GNU tar, npm, audit, systemd) to cleanly
+        // skip sandboxing and take their normal standard code paths.
+        ret_val = -ENOSYS;
     } else if (sys_nr == 277 /* __NR_seccomp (arm64) */ ||
                sys_nr == 317 /* __NR_seccomp (x86_64) */ ||
                sys_nr == 383 /* __NR_seccomp (arm32) */) {
@@ -1902,37 +1889,23 @@ int fchownat(int dirfd, const char *pathname, uid_t owner, gid_t group, int flag
 }
 int chroot(const char *path) { (void)path; return 0; }
 
-// Hook mknod / mknodat
-int mknod(const char *pathname, mode_t mode, dev_t dev) {
-    (void)dev;
-    if (S_ISREG(mode)) {
-        return creat(pathname, mode);
-    }
-    if (S_ISFIFO(mode)) {
-        static int (*orig_mkfifo)(const char *, mode_t) = NULL;
-        if (!orig_mkfifo) orig_mkfifo = (int (*)(const char *, mode_t))dlsym(RTLD_NEXT, "mkfifo");
-        char buf[PATH_MAX];
-        const char *target = rewrite_path(pathname, buf, sizeof(buf));
-        return orig_mkfifo ? orig_mkfifo(target, mode) : 0;
-    }
-    return 0;
-}
-
-int mkfifoat(int dirfd, const char *pathname, mode_t mode) {
-    static int (*orig_mkfifoat)(int, const char *, mode_t) = NULL;
-    if (!orig_mkfifoat) orig_mkfifoat = (int (*)(int, const char *, mode_t))dlsym(RTLD_NEXT, "mkfifoat");
-    char buf[PATH_MAX];
-    const char *target = (pathname && pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig_mkfifoat ? orig_mkfifoat(dirfd, target, mode) : 0;
-}
+// Hook mkfifo / mkfifoat / mknod / mknodat
+int mkfifo(const char *pathname, mode_t mode);
+int mkfifoat(int dirfd, const char *pathname, mode_t mode);
 
 int mknodat(int dirfd, const char *pathname, mode_t mode, dev_t dev) {
     (void)dev;
+    if (!pathname) {
+        errno = EFAULT;
+        return -1;
+    }
+    char buf[PATH_MAX];
+    const char *target = (pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
     if (S_ISREG(mode)) {
         // mknod(2) returns 0 on success, never a file descriptor: close the
         // transient fd instead of leaking one per call (tar/dpkg extract
         // thousands of files; leaked fds exhaust the table -> EBADF noise).
-        int fd = openat(dirfd, pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
+        int fd = openat(dirfd, target, O_CREAT | O_WRONLY | O_TRUNC, mode);
         if (fd >= 0) {
             close(fd);
             return 0;
@@ -1940,9 +1913,37 @@ int mknodat(int dirfd, const char *pathname, mode_t mode, dev_t dev) {
         return -1;
     }
     if (S_ISFIFO(mode)) {
-        return mkfifoat(dirfd, pathname, mode);
+        return mkfifoat(dirfd, target, mode);
     }
     return 0;
+}
+
+int mknod(const char *pathname, mode_t mode, dev_t dev) {
+    return mknodat(AT_FDCWD, pathname, mode, dev);
+}
+
+int mkfifoat(int dirfd, const char *pathname, mode_t mode) {
+    static int (*orig_mkfifoat)(int, const char *, mode_t) = NULL;
+    if (!orig_mkfifoat) orig_mkfifoat = (int (*)(int, const char *, mode_t))dlsym(RTLD_NEXT, "mkfifoat");
+    if (!pathname) {
+        errno = EFAULT;
+        return -1;
+    }
+    char buf[PATH_MAX];
+    const char *target = (pathname[0] == '/') ? rewrite_path(pathname, buf, sizeof(buf)) : pathname;
+    if (orig_mkfifoat) {
+        return orig_mkfifoat(dirfd, target, mode);
+    }
+    static int (*orig_mkfifo)(const char *, mode_t) = NULL;
+    if (!orig_mkfifo) orig_mkfifo = (int (*)(const char *, mode_t))dlsym(RTLD_NEXT, "mkfifo");
+    if (orig_mkfifo && dirfd == AT_FDCWD) {
+        return orig_mkfifo(target, mode);
+    }
+    return -1;
+}
+
+int mkfifo(const char *pathname, mode_t mode) {
+    return mkfifoat(AT_FDCWD, pathname, mode);
 }
 
 // Hook sync / syncfs to prevent Android flash storage stalls during dpkg operations
@@ -2088,31 +2089,10 @@ int prctl(int option, ...) {
 #define SECCOMP_GET_ACTION_AVAIL 2
 #endif
 
-static int cortex_get_dummy_ruleset_fd(void) {
-    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-    if (fd < 0) {
-        int p[2];
-        if (pipe2(p, O_CLOEXEC) == 0) {
-            close(p[1]);
-            fd = p[0];
-        }
-    }
-    return fd;
-}
-
 int landlock_create_ruleset(const void *attr, size_t size, uint32_t flags) {
     (void)attr;
     (void)size;
-    if (flags & LANDLOCK_CREATE_RULESET_VERSION) {
-        const char *env_enosys = getenv("CORTEX_LANDLOCK_ENOSYS");
-        if (env_enosys && (env_enosys[0] == '1' || env_enosys[0] == 'y' || env_enosys[0] == 'Y')) {
-            errno = ENOSYS;
-            return -1;
-        }
-        return 1; // Landlock ABI version 1 supported
-    }
-    int fd = cortex_get_dummy_ruleset_fd();
-    if (fd >= 0) return fd;
+    (void)flags;
     errno = ENOSYS;
     return -1;
 }
@@ -2122,13 +2102,15 @@ int landlock_add_rule(int ruleset_fd, int rule_type, const void *rule_attr, uint
     (void)rule_type;
     (void)rule_attr;
     (void)flags;
-    return 0;
+    errno = ENOSYS;
+    return -1;
 }
 
 int landlock_restrict_self(int ruleset_fd, uint32_t flags) {
     (void)ruleset_fd;
     (void)flags;
-    return 0;
+    errno = ENOSYS;
+    return -1;
 }
 
 int seccomp(unsigned int operation, unsigned int flags, void *args) {
@@ -2328,6 +2310,24 @@ long syscall(long number, ...) {
 #if defined(__NR_faccessat2)
     if (number == __NR_faccessat2) {
         return (long)faccessat2((int)arg1, (const char *)arg2, (int)arg3, (int)arg4);
+    }
+#endif
+
+#if defined(__NR_mknodat)
+    if (number == __NR_mknodat) {
+        return (long)mknodat((int)arg1, (const char *)arg2, (mode_t)arg3, (dev_t)arg4);
+    }
+#endif
+
+#if defined(__NR_mknod)
+    if (number == __NR_mknod) {
+        return (long)mknod((const char *)arg1, (mode_t)arg2, (dev_t)arg3);
+    }
+#endif
+
+#if defined(__NR_mkfifoat)
+    if (number == __NR_mkfifoat) {
+        return (long)mkfifoat((int)arg1, (const char *)arg2, (mode_t)arg3);
     }
 #endif
 
@@ -3428,11 +3428,74 @@ int posix_spawnp(pid_t *pid, const char *file,
 }
 
 // DNS resolution hooking and localhost DNS redirect
+#define DNS_REDIRECT_MAX 64
+static struct {
+    int fd;
+    in_addr_t orig_ip;
+    in_port_t orig_port;
+    uint32_t active;
+} g_dns_redirects[DNS_REDIRECT_MAX];
+static pthread_mutex_t g_dns_redirect_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void record_dns_redirect(int fd, in_addr_t orig_ip, in_port_t orig_port) {
+    if (fd < 0) return;
+    pthread_mutex_lock(&g_dns_redirect_mutex);
+    int target_idx = (fd >= 0 ? fd : -fd) % DNS_REDIRECT_MAX;
+    g_dns_redirects[target_idx].fd = fd;
+    g_dns_redirects[target_idx].orig_ip = orig_ip;
+    g_dns_redirects[target_idx].orig_port = orig_port;
+    g_dns_redirects[target_idx].active = 1;
+    pthread_mutex_unlock(&g_dns_redirect_mutex);
+}
+
+static int get_dns_redirect(int fd, in_addr_t *orig_ip, in_port_t *orig_port) {
+    if (fd < 0) return 0;
+    int found = 0;
+    pthread_mutex_lock(&g_dns_redirect_mutex);
+    int target_idx = (fd >= 0 ? fd : -fd) % DNS_REDIRECT_MAX;
+    if (g_dns_redirects[target_idx].active && g_dns_redirects[target_idx].fd == fd) {
+        if (orig_ip) *orig_ip = g_dns_redirects[target_idx].orig_ip;
+        if (orig_port) *orig_port = g_dns_redirects[target_idx].orig_port;
+        found = 1;
+    }
+    pthread_mutex_unlock(&g_dns_redirect_mutex);
+    return found;
+}
+
+static inline int is_loopback_dns(const struct sockaddr *addr, socklen_t addrlen) {
+    if (!addr || addrlen < sizeof(struct sockaddr_in)) return 0;
+    if (addr->sa_family != AF_INET) return 0;
+    const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
+    return (sin->sin_port == htons(53) && ((ntohl(sin->sin_addr.s_addr) >> 24) == 127));
+}
+
 static in_addr_t get_primary_dns(void) {
     static in_addr_t primary_dns = 0;
     if (primary_dns != 0) return primary_dns;
 
     init_cortex_hook();
+
+    // 1. Check Android system property net.dns1 via Bionic libc
+    static int (*orig_sys_prop_get)(const char *, char *) = NULL;
+    static int prop_lookup_done = 0;
+    if (!prop_lookup_done) {
+        orig_sys_prop_get = (int (*)(const char *, char *))dlsym(RTLD_DEFAULT, "__system_property_get");
+        prop_lookup_done = 1;
+    }
+    if (orig_sys_prop_get) {
+        char prop_val[256];
+        if (orig_sys_prop_get("net.dns1", prop_val) > 0 && prop_val[0] != '\0') {
+            struct in_addr a;
+            if (inet_aton(prop_val, &a)) {
+                if ((ntohl(a.s_addr) >> 24) != 127 && a.s_addr != 0) {
+                    primary_dns = a.s_addr;
+                    return primary_dns;
+                }
+            }
+        }
+    }
+
+    // 2. Parse /etc/resolv.conf in Cortex rootfs
     char resolv_path[PATH_MAX];
     if (g_cortex_root[0] != '\0') {
         snprintf(resolv_path, sizeof(resolv_path), "%s/etc/resolv.conf", g_cortex_root);
@@ -3454,8 +3517,11 @@ static in_addr_t get_primary_dns(void) {
                 *end = '\0';
                 struct in_addr a;
                 if (inet_aton(p, &a)) {
-                    primary_dns = a.s_addr;
-                    break;
+                    // Only accept valid, non-loopback DNS servers
+                    if ((ntohl(a.s_addr) >> 24) != 127 && a.s_addr != 0) {
+                        primary_dns = a.s_addr;
+                        break;
+                    }
                 }
             }
         }
@@ -3530,21 +3596,28 @@ static int dns_lookup_ipv4(const char *hostname, struct in_addr *out_addr) {
     packet[pos++] = 0x01; // QCLASS IN
     int packet_len = pos;
 
-    in_addr_t dns_servers[3];
-    dns_servers[0] = get_primary_dns();
-    dns_servers[1] = inet_addr("8.8.8.8");
-    dns_servers[2] = inet_addr("1.1.1.1");
+    in_addr_t dns_servers[4];
+    int server_count = 0;
+    in_addr_t p_dns = get_primary_dns();
+    if (p_dns != 0 && (ntohl(p_dns) >> 24) != 127) {
+        dns_servers[server_count++] = p_dns;
+    }
+    in_addr_t g_dns = inet_addr("8.8.8.8");
+    if (g_dns != p_dns) dns_servers[server_count++] = g_dns;
+    in_addr_t c_dns = inet_addr("1.1.1.1");
+    if (c_dns != p_dns && c_dns != g_dns) dns_servers[server_count++] = c_dns;
+    in_addr_t o_dns = inet_addr("9.9.9.9");
+    if (o_dns != p_dns && o_dns != g_dns && o_dns != c_dns) dns_servers[server_count++] = o_dns;
 
-    for (int s = 0; s < 3; s++) {
+    for (int s = 0; s < server_count; s++) {
         if (dns_servers[s] == 0) continue;
-        if (s > 0 && dns_servers[s] == dns_servers[0]) continue;
 
         int sock = socket(AF_INET, SOCK_DGRAM, 0);
         if (sock < 0) continue;
 
         struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 500000;
+        tv.tv_sec = 0;
+        tv.tv_usec = 600000; // 600ms fast failover
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
         struct sockaddr_in dest;
@@ -3654,6 +3727,50 @@ static int synthesize_fallback_addrinfo(const char *node, const char *service,
         return 0;
     }
 
+    if (strstr(node, "opencode.ai") != NULL) {
+        struct addrinfo *ai1 = alloc_one_addrinfo(node, "172.65.90.22", port, socktype, protocol);
+        if (!ai1) return EAI_MEMORY;
+        struct addrinfo *ai2 = alloc_one_addrinfo(node, "172.65.90.23", port, socktype, protocol);
+        if (ai2) {
+            ai1->ai_next = ai2;
+        }
+        *res = ai1;
+        return 0;
+    }
+
+    if (strstr(node, "github.com") != NULL) {
+        struct addrinfo *ai1 = alloc_one_addrinfo(node, "140.82.121.6", port, socktype, protocol);
+        if (!ai1) return EAI_MEMORY;
+        struct addrinfo *ai2 = alloc_one_addrinfo(node, "140.82.121.4", port, socktype, protocol);
+        if (ai2) {
+            ai1->ai_next = ai2;
+        }
+        *res = ai1;
+        return 0;
+    }
+
+    if (strstr(node, "githubusercontent.com") != NULL) {
+        struct addrinfo *ai1 = alloc_one_addrinfo(node, "185.199.110.133", port, socktype, protocol);
+        if (!ai1) return EAI_MEMORY;
+        struct addrinfo *ai2 = alloc_one_addrinfo(node, "185.199.108.133", port, socktype, protocol);
+        if (ai2) {
+            ai1->ai_next = ai2;
+        }
+        *res = ai1;
+        return 0;
+    }
+
+    if (strstr(node, "npmjs.org") != NULL || strstr(node, "npmjs.com") != NULL) {
+        struct addrinfo *ai1 = alloc_one_addrinfo(node, "104.16.2.34", port, socktype, protocol);
+        if (!ai1) return EAI_MEMORY;
+        struct addrinfo *ai2 = alloc_one_addrinfo(node, "104.16.3.34", port, socktype, protocol);
+        if (ai2) {
+            ai1->ai_next = ai2;
+        }
+        *res = ai1;
+        return 0;
+    }
+
     if (strstr(node, "googleapis.com") != NULL || strstr(node, "accounts.google.com") != NULL) {
         struct addrinfo *ai1 = alloc_one_addrinfo(node, "142.251.127.95", port, socktype, protocol);
         if (!ai1) return EAI_MEMORY;
@@ -3730,14 +3847,21 @@ int res_init(void) {
     int ret = orig_res_init ? orig_res_init() : 0;
     res_state statp = __res_state();
     if (statp) {
-        if (statp->nscount <= 0 || (statp->nscount == 1 && statp->nsaddr_list[0].sin_addr.s_addr == htonl(INADDR_LOOPBACK))) {
+        int has_non_loopback = 0;
+        for (int i = 0; i < statp->nscount; i++) {
+            if ((ntohl(statp->nsaddr_list[i].sin_addr.s_addr) >> 24) != 127 && statp->nsaddr_list[i].sin_addr.s_addr != 0) {
+                has_non_loopback = 1;
+                break;
+            }
+        }
+        if (!has_non_loopback || statp->nscount <= 0) {
             statp->nscount = 2;
             statp->nsaddr_list[0].sin_family = AF_INET;
             statp->nsaddr_list[0].sin_port = htons(53);
-            inet_pton(AF_INET, "8.8.8.8", &statp->nsaddr_list[0].sin_addr);
+            statp->nsaddr_list[0].sin_addr.s_addr = get_primary_dns();
             statp->nsaddr_list[1].sin_family = AF_INET;
             statp->nsaddr_list[1].sin_port = htons(53);
-            inet_pton(AF_INET, "1.1.1.1", &statp->nsaddr_list[1].sin_addr);
+            inet_pton(AF_INET, "8.8.8.8", &statp->nsaddr_list[1].sin_addr);
         }
         statp->retrans = 1;
         statp->retry = 2;
@@ -3757,14 +3881,21 @@ int res_ninit(res_state statp) {
     }
     int ret = orig_res_ninit ? orig_res_ninit(statp) : 0;
     if (statp) {
-        if (statp->nscount <= 0 || (statp->nscount == 1 && statp->nsaddr_list[0].sin_addr.s_addr == htonl(INADDR_LOOPBACK))) {
+        int has_non_loopback = 0;
+        for (int i = 0; i < statp->nscount; i++) {
+            if ((ntohl(statp->nsaddr_list[i].sin_addr.s_addr) >> 24) != 127 && statp->nsaddr_list[i].sin_addr.s_addr != 0) {
+                has_non_loopback = 1;
+                break;
+            }
+        }
+        if (!has_non_loopback || statp->nscount <= 0) {
             statp->nscount = 2;
             statp->nsaddr_list[0].sin_family = AF_INET;
             statp->nsaddr_list[0].sin_port = htons(53);
-            inet_pton(AF_INET, "8.8.8.8", &statp->nsaddr_list[0].sin_addr);
+            statp->nsaddr_list[0].sin_addr.s_addr = get_primary_dns();
             statp->nsaddr_list[1].sin_family = AF_INET;
             statp->nsaddr_list[1].sin_port = htons(53);
-            inet_pton(AF_INET, "1.1.1.1", &statp->nsaddr_list[1].sin_addr);
+            inet_pton(AF_INET, "8.8.8.8", &statp->nsaddr_list[1].sin_addr);
         }
         statp->retrans = 1;
         statp->retry = 2;
@@ -3898,14 +4029,15 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
         }
     }
 
-    if (addr && addr->sa_family == AF_INET && addrlen >= sizeof(struct sockaddr_in)) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)addr;
-        if (sin->sin_port == htons(53) && sin->sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
-            struct sockaddr_in redirected;
-            memcpy(&redirected, sin, sizeof(redirected));
-            redirected.sin_addr.s_addr = get_primary_dns();
-            return orig_connect ? orig_connect(sockfd, (struct sockaddr *)&redirected, sizeof(redirected)) : -1;
+    if (addr && is_loopback_dns(addr, addrlen)) {
+        struct sockaddr_in redirected;
+        memcpy(&redirected, addr, sizeof(redirected));
+        redirected.sin_addr.s_addr = get_primary_dns();
+        int ret = orig_connect ? orig_connect(sockfd, (struct sockaddr *)&redirected, sizeof(redirected)) : -1;
+        if (ret == 0) {
+            record_dns_redirect(sockfd, ((const struct sockaddr_in *)addr)->sin_addr.s_addr, ((const struct sockaddr_in *)addr)->sin_port);
         }
+        return ret;
     }
     return orig_connect ? orig_connect(sockfd, addr, addrlen) : -1;
 }
@@ -3915,14 +4047,12 @@ ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
     static ssize_t (*orig_sendto)(int, const void *, size_t, int, const struct sockaddr *, socklen_t) = NULL;
     if (!orig_sendto) orig_sendto = (ssize_t (*)(int, const void *, size_t, int, const struct sockaddr *, socklen_t))dlsym(RTLD_NEXT, "sendto");
 
-    if (dest_addr && dest_addr->sa_family == AF_INET && addrlen >= sizeof(struct sockaddr_in)) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)dest_addr;
-        if (sin->sin_port == htons(53) && sin->sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
-            struct sockaddr_in redirected;
-            memcpy(&redirected, sin, sizeof(redirected));
-            redirected.sin_addr.s_addr = get_primary_dns();
-            return orig_sendto ? orig_sendto(sockfd, buf, len, flags, (struct sockaddr *)&redirected, sizeof(redirected)) : -1;
-        }
+    if (dest_addr && is_loopback_dns(dest_addr, addrlen)) {
+        struct sockaddr_in redirected;
+        memcpy(&redirected, dest_addr, sizeof(redirected));
+        redirected.sin_addr.s_addr = get_primary_dns();
+        record_dns_redirect(sockfd, ((const struct sockaddr_in *)dest_addr)->sin_addr.s_addr, ((const struct sockaddr_in *)dest_addr)->sin_port);
+        return orig_sendto ? orig_sendto(sockfd, buf, len, flags, (struct sockaddr *)&redirected, sizeof(redirected)) : -1;
     }
     return orig_sendto ? orig_sendto(sockfd, buf, len, flags, dest_addr, addrlen) : -1;
 }
@@ -3931,18 +4061,74 @@ ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     static ssize_t (*orig_sendmsg)(int, const struct msghdr *, int) = NULL;
     if (!orig_sendmsg) orig_sendmsg = (ssize_t (*)(int, const struct msghdr *, int))dlsym(RTLD_NEXT, "sendmsg");
 
-    if (msg && msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_in)) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)msg->msg_name;
-        if (sin->sin_family == AF_INET && sin->sin_port == htons(53) && sin->sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
-            struct sockaddr_in redirected;
-            memcpy(&redirected, sin, sizeof(redirected));
-            redirected.sin_addr.s_addr = get_primary_dns();
-            struct msghdr mod_msg;
-            memcpy(&mod_msg, msg, sizeof(mod_msg));
-            mod_msg.msg_name = &redirected;
-            return orig_sendmsg ? orig_sendmsg(sockfd, &mod_msg, flags) : -1;
-        }
+    if (msg && msg->msg_name && is_loopback_dns((const struct sockaddr *)msg->msg_name, msg->msg_namelen)) {
+        struct sockaddr_in redirected;
+        memcpy(&redirected, msg->msg_name, sizeof(redirected));
+        redirected.sin_addr.s_addr = get_primary_dns();
+        struct msghdr mod_msg;
+        memcpy(&mod_msg, msg, sizeof(mod_msg));
+        mod_msg.msg_name = &redirected;
+        record_dns_redirect(sockfd, ((const struct sockaddr_in *)msg->msg_name)->sin_addr.s_addr, ((const struct sockaddr_in *)msg->msg_name)->sin_port);
+        return orig_sendmsg ? orig_sendmsg(sockfd, &mod_msg, flags) : -1;
     }
     return orig_sendmsg ? orig_sendmsg(sockfd, msg, flags) : -1;
+}
+
+ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
+                 struct sockaddr *src_addr, socklen_t *addrlen) {
+    static ssize_t (*orig_recvfrom)(int, void *, size_t, int, struct sockaddr *, socklen_t *) = NULL;
+    if (!orig_recvfrom) orig_recvfrom = (ssize_t (*)(int, void *, size_t, int, struct sockaddr *, socklen_t *))dlsym(RTLD_NEXT, "recvfrom");
+
+    ssize_t ret = orig_recvfrom ? orig_recvfrom(sockfd, buf, len, flags, src_addr, addrlen) : -1;
+    if (ret > 0 && src_addr && addrlen && *addrlen >= sizeof(struct sockaddr_in)) {
+        if (src_addr->sa_family == AF_INET) {
+            struct sockaddr_in *sin = (struct sockaddr_in *)src_addr;
+            in_addr_t orig_ip;
+            in_port_t orig_port;
+            if (get_dns_redirect(sockfd, &orig_ip, &orig_port)) {
+                sin->sin_addr.s_addr = orig_ip;
+                sin->sin_port = orig_port;
+            }
+        }
+    }
+    return ret;
+}
+
+ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags) {
+    static ssize_t (*orig_recvmsg)(int, struct msghdr *, int) = NULL;
+    if (!orig_recvmsg) orig_recvmsg = (ssize_t (*)(int, struct msghdr *, int))dlsym(RTLD_NEXT, "recvmsg");
+
+    ssize_t ret = orig_recvmsg ? orig_recvmsg(sockfd, msg, flags) : -1;
+    if (ret > 0 && msg && msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_in)) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)msg->msg_name;
+        if (sin->sin_family == AF_INET) {
+            in_addr_t orig_ip;
+            in_port_t orig_port;
+            if (get_dns_redirect(sockfd, &orig_ip, &orig_port)) {
+                sin->sin_addr.s_addr = orig_ip;
+                sin->sin_port = orig_port;
+            }
+        }
+    }
+    return ret;
+}
+
+int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    static int (*orig_getpeername)(int, struct sockaddr *, socklen_t *) = NULL;
+    if (!orig_getpeername) orig_getpeername = (int (*)(int, struct sockaddr *, socklen_t *))dlsym(RTLD_NEXT, "getpeername");
+
+    int ret = orig_getpeername ? orig_getpeername(sockfd, addr, addrlen) : -1;
+    if (ret == 0 && addr && addrlen && *addrlen >= sizeof(struct sockaddr_in)) {
+        if (addr->sa_family == AF_INET) {
+            struct sockaddr_in *sin = (struct sockaddr_in *)addr;
+            in_addr_t orig_ip;
+            in_port_t orig_port;
+            if (get_dns_redirect(sockfd, &orig_ip, &orig_port)) {
+                sin->sin_addr.s_addr = orig_ip;
+                sin->sin_port = orig_port;
+            }
+        }
+    }
+    return ret;
 }
 

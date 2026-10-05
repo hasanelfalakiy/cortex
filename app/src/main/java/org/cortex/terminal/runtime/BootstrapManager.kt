@@ -81,10 +81,12 @@ object BootstrapManager {
                     "alias cls='clear'\n"
                 changed = true
             }
-            if (!bashrcText.contains(".opencode/bin")) {
-                bashrcText += "export PATH=\"" + d + "HOME/.opencode/bin:" + d + "HOME/.local/bin:" + d + "PATH\"\n"
+            if (bashrcText.contains(".opencode/bin")) {
+                bashrcText = bashrcText.replace(d + "HOME/.opencode/bin:", "")
+                bashrcText = bashrcText.replace("/home/.opencode/bin:", "")
                 changed = true
-            } else if (!bashrcText.contains(".local/bin")) {
+            }
+            if (!bashrcText.contains(".local/bin")) {
                 bashrcText += "export PATH=\"" + d + "HOME/.local/bin:" + d + "PATH\"\n"
                 changed = true
             }
@@ -1371,8 +1373,16 @@ object BootstrapManager {
 
             val etcDir = File(root, "etc")
             etcDir.mkdirs()
+            val resolvFile = File(etcDir, "resolv.conf")
+            try {
+                java.nio.file.Files.deleteIfExists(resolvFile.toPath())
+            } catch (_: Exception) {
+                resolvFile.delete()
+            }
             val resolvConf = selectedDns.joinToString("\n") { "nameserver $it" } + "\noptions timeout:1 attempts:2 rotate\n"
-            File(etcDir, "resolv.conf").writeText(resolvConf)
+            resolvFile.writeText(resolvConf)
+            resolvFile.setReadable(true, false)
+            try { android.system.Os.chmod(resolvFile.absolutePath, 420) } catch (_: Exception) {}
 
             ensureHosts(root)
             ensureNsswitch(root)
@@ -1877,11 +1887,9 @@ object BootstrapManager {
             ensureMachineId(root)
             ensureShm(root)
             ensureSystemdSharedLibs(root)
-            ensureOpenCodeDirs(home, root)
             ensureMountpoint(root)
             ensureJavaCaDirs(root)
-            ensureMuseLauncher(root, home)
-            ensureOpenCodeLauncher(root, home)
+            cleanupAutoLaunchers(root)
             ensureProfileEnvironment(root)
         } catch (e: Exception) {
             android.util.Log.e("BootstrapManager", "Failed in ensureEssentialBinaries", e)
@@ -1981,120 +1989,30 @@ object BootstrapManager {
         }
     }
 
-    fun ensureOpenCodeLauncher(root: File, home: File) {
+    fun cleanupAutoLaunchers(root: File) {
         try {
-            val usrLocalBin = File(root, "usr/local/bin")
-            usrLocalBin.mkdirs()
-            val opencode = File(usrLocalBin, "opencode")
-            val opencodeScript = "#!/bin/bash\n" +
-                "mkdir -p \"\$HOME/.config/opencode\" \"\$HOME/.local/share/opencode\" \"\$HOME/.cache/opencode\" 2>/dev/null || true\n" +
-                "if [ ! -f \"\$HOME/.config/opencode/opencode.json\" ]; then\n" +
-                "    echo \"{}\" > \"\$HOME/.config/opencode/opencode.json\" 2>/dev/null || true\n" +
-                "fi\n" +
-                "for cand in \"\$HOME/.opencode/bin/opencode\" \"/home/.opencode/bin/opencode\" \"\$HOME/.local/bin/opencode\" \"/home/.local/bin/opencode\"; do\n" +
-                "    if [ -x \"\$cand\" ]; then\n" +
-                "        exec \"\$cand\" \"\$@\"\n" +
-                "    fi\n" +
-                "done\n" +
-                "echo \"==========================================================\"\n" +
-                "echo \" OpenCode CLI is not yet installed.\"\n" +
-                "echo \" Installing OpenCode CLI (high-speed native installer)...\"\n" +
-                "echo \"==========================================================\"\n" +
-                "ARCH=\"\$(uname -m)\"\n" +
-                "case \"\$ARCH\" in\n" +
-                "    aarch64|arm64) TARGET_ARCH=\"linux-arm64\" ;;\n" +
-                "    x86_64|amd64) TARGET_ARCH=\"linux-x64\" ;;\n" +
-                "    *) TARGET_ARCH=\"linux-arm64\" ;;\n" +
-                "esac\n" +
-                "INSTALL_DIR=\"\$HOME/.opencode/bin\"\n" +
-                "mkdir -p \"\$INSTALL_DIR\"\n" +
-                "TMP_DIR=\"\${TMPDIR:-/tmp}/opencode_setup_\$\$\"\n" +
-                "mkdir -p \"\$TMP_DIR\"\n" +
-                "VERSION=\"0.0.0-beta-17236\"\n" +
-                "META=\"\$(curl -sSL --max-time 6 https://opencode.ai/update/api/latest/cli/npm 2>/dev/null || true)\"\n" +
-                "V_CAND=\"\$(echo \"\$META\" | sed -n 's/.*\"version\":\"\\([^\"]*\\)\".*/\\1/p')\"\n" +
-                "if [ -n \"\$V_CAND\" ]; then VERSION=\"\$V_CAND\"; fi\n" +
-                "echo \"Downloading OpenCode CLI v\$VERSION for \$TARGET_ARCH...\"\n" +
-                "TAR_URL=\"https://registry.npmjs.org/@opencode/cli-\$TARGET_ARCH/-/cli-\$TARGET_ARCH-\$VERSION.tgz\"\n" +
-                "if ! curl -# -L -f -o \"\$TMP_DIR/opencode.tgz\" \"\$TAR_URL\"; then\n" +
-                "    echo \"Fallback to alternate registry URL...\"\n" +
-                "    curl -# -L -f -o \"\$TMP_DIR/opencode.tgz\" \"https://registry.npmjs.org/@opencode-ai/cli-\$TARGET_ARCH/-/cli-\$TARGET_ARCH-\$VERSION.tgz\" || true\n" +
-                "fi\n" +
-                "if [ -f \"\$TMP_DIR/opencode.tgz\" ] && [ -s \"\$TMP_DIR/opencode.tgz\" ]; then\n" +
-                "    tar -xzf \"\$TMP_DIR/opencode.tgz\" -C \"\$TMP_DIR\"\n" +
-                "    if [ -f \"\$TMP_DIR/package/bin/opencode\" ]; then\n" +
-                "        mv -f \"\$TMP_DIR/package/bin/opencode\" \"\$INSTALL_DIR/opencode\"\n" +
-                "        chmod 755 \"\$INSTALL_DIR/opencode\"\n" +
-                "        rm -rf \"\$TMP_DIR\"\n" +
-                "        echo \"OpenCode CLI installed successfully!\"\n" +
-                "        exec \"\$INSTALL_DIR/opencode\" \"\$@\"\n" +
-                "    fi\n" +
-                "fi\n" +
-                "rm -rf \"\$TMP_DIR\"\n" +
-                "echo \"Direct install failed, trying fallback installer...\"\n" +
-                "curl -f -# -L https://opencode.ai/v2/install | bash -s -- --no-modify-path 2>/dev/null || true\n" +
-                "for cand in \"\$HOME/.opencode/bin/opencode\" \"/home/.opencode/bin/opencode\" \"\$HOME/.local/bin/opencode\" \"/home/.local/bin/opencode\"; do\n" +
-                "    if [ -x \"\$cand\" ]; then\n" +
-                "        exec \"\$cand\" \"\$@\"\n" +
-                "    fi\n" +
-                "done\n" +
-                "exit 127\n"
-            opencode.writeText(opencodeScript)
-            opencode.setExecutable(true, false)
-            opencode.setReadable(true, false)
-            try { android.system.Os.chmod(opencode.absolutePath, 493) } catch (e: Exception) {}
+            val candidates = listOf(
+                File(root, "usr/local/bin/opencode"),
+                File(root, "usr/local/bin/muse"),
+                File(root, "usr/bin/opencode"),
+                File(root, "usr/bin/muse"),
+                File(root, "bin/opencode"),
+                File(root, "bin/muse")
+            )
+            for (cand in candidates) {
+                if (cand.exists()) {
+                    val text = try { cand.readText() } catch (_: Exception) { "" }
+                    if (text.contains("OpenCode CLI is not yet installed") ||
+                        text.contains("Meta Muse Code CLI is not yet installed") ||
+                        text.contains("opencode.ai") ||
+                        text.contains("dev.meta.ai")) {
+                        cand.delete()
+                        android.util.Log.i("BootstrapManager", "Removed auto-installer wrapper: ${cand.absolutePath}")
+                    }
+                }
+            }
         } catch (e: Exception) {
-            android.util.Log.e("BootstrapManager", "Failed to ensure opencode launcher", e)
-        }
-    }
-
-    fun ensureMuseLauncher(root: File, home: File) {
-        try {
-            val usrLocalBin = File(root, "usr/local/bin")
-            usrLocalBin.mkdirs()
-            val muse = File(usrLocalBin, "muse")
-            val museScript = "#!/bin/bash\n" +
-                "for cand in \"\$HOME/.local/bin/muse\" \"/home/.local/bin/muse\"; do\n" +
-                "    if [ -x \"\$cand\" ]; then\n" +
-                "        exec \"\$cand\" \"\$@\"\n" +
-                "    fi\n" +
-                "done\n" +
-                "for cand in \"\$HOME/.local/bin/muse-bin-\"* \"/home/.local/bin/muse-bin-\"*; do\n" +
-                "    if [ -x \"\$cand\" ]; then\n" +
-                "        exec \"\$cand\" \"\$@\"\n" +
-                "    fi\n" +
-                "done\n" +
-                "echo \"==========================================================\"\n" +
-                "echo \" Meta Muse Code CLI is not yet installed.\"\n" +
-                "echo \" Installing Meta Muse Code CLI...\"\n" +
-                "echo \"==========================================================\"\n" +
-                "mkdir -p \"\$HOME/.local/bin\"\n" +
-                "echo \"Installing official Meta Muse Code binary via direct CDN mirror...\"\n" +
-                "MUSE_VER=\"1.4.2-R4684.1\"\n" +
-                "MUSE_URL=\"https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=\$MUSE_VER&file=muse-aarch64-linux\"\n" +
-                "MUSE_BIN=\"\$HOME/.local/bin/muse-bin-\$MUSE_VER\"\n" +
-                "if curl -# -L -f -o \"\$MUSE_BIN\" \"\$MUSE_URL\"; then\n" +
-                "    chmod 755 \"\$MUSE_BIN\"\n" +
-                "    echo \"\$MUSE_VER\" > \"\$HOME/.local/bin/.muse-version\"\n" +
-                "    ln -sf \"muse-bin-\$MUSE_VER\" \"\$HOME/.local/bin/muse\"\n" +
-                "    echo \"Meta Muse Code CLI v\$MUSE_VER installed successfully!\"\n" +
-                "    exec \"\$MUSE_BIN\" \"\$@\"\n" +
-                "fi\n" +
-                "echo \"Direct CDN mirror failed, trying official installer script...\"\n" +
-                "curl -fsSL https://dev.meta.ai/install.sh 2>/dev/null | bash 2>/dev/null || true\n" +
-                "for cand in \"\$HOME/.local/bin/muse\" \"/home/.local/bin/muse\"; do\n" +
-                "    if [ -x \"\$cand\" ]; then\n" +
-                "        exec \"\$cand\" \"\$@\"\n" +
-                "    fi\n" +
-                "done\n" +
-                "echo \"Failed to install Muse Code CLI. Please check internet connection.\"\n" +
-                "exit 127\n"
-            muse.writeText(museScript)
-            muse.setExecutable(true, false)
-            muse.setReadable(true, false)
-            try { android.system.Os.chmod(muse.absolutePath, 493) } catch (e: Exception) {}
-        } catch (e: Exception) {
-            android.util.Log.e("BootstrapManager", "Failed to ensure muse launcher", e)
+            android.util.Log.e("BootstrapManager", "Failed to cleanup auto-launchers", e)
         }
     }
 
@@ -2168,33 +2086,6 @@ object BootstrapManager {
         }
     }
 
-    fun ensureOpenCodeDirs(home: File, root: File) {
-        try {
-            val homes = mutableListOf(home)
-            val rootUserHome = File(root, "root")
-            if (rootUserHome.exists()) homes.add(rootUserHome)
-            val homeCortex = File(root, "home/cortex")
-            if (homeCortex.exists() && homeCortex.absolutePath != home.absolutePath) homes.add(homeCortex)
-
-            for (h in homes) {
-                val cfgDir = File(h, ".config/opencode")
-                cfgDir.mkdirs()
-                val cfgFile = File(cfgDir, "opencode.json")
-                if (!cfgFile.exists()) {
-                    try {
-                        cfgFile.writeText("{}\n")
-                        cfgFile.setReadable(true, false)
-                        cfgFile.setWritable(true, false)
-                    } catch (_: Exception) {}
-                }
-                File(h, ".local/share/opencode").mkdirs()
-                File(h, ".cache/opencode").mkdirs()
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("BootstrapManager", "Failed to ensure opencode dirs", e)
-        }
-    }
-
     fun ensureMountpoint(root: File) {
         try {
             val script = "#!/bin/sh\n" +
@@ -2254,7 +2145,7 @@ object BootstrapManager {
                 "fi\n" +
                 "export LD_LIBRARY_PATH=\"\$CORTEX_ROOT/lib:\$CORTEX_ROOT/usr/lib:\$CORTEX_ROOT/lib/aarch64-linux-gnu:\$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:\$CORTEX_ROOT/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:\$CORTEX_ROOT/usr/local/lib:\$CORTEX_ROOT/usr/lib/systemd:\$CORTEX_ROOT/lib/systemd:\$CORTEX_ROOT/usr/lib/aarch64-linux-gnu/systemd:\$CORTEX_ROOT/lib/aarch64-linux-gnu/systemd:\$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf/systemd:\$CORTEX_ROOT/lib/arm-linux-gnueabihf/systemd\"\n" +
                 "export LD_PRELOAD=\"\$CORTEX_ROOT/usr/lib/libcortex-hook.so\"\n" +
-                "export PATH=\"/home/.opencode/bin:\$HOME/.opencode/bin:/home/.local/bin:\$HOME/.local/bin:\$PATH\"\n"
+                "export PATH=\"/home/.local/bin:\$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\$PATH\"\n"
             envSh.writeText(envContent)
             envSh.setReadable(true, false)
             try { android.system.Os.chmod(envSh.absolutePath, 420) } catch (e: Exception) {}

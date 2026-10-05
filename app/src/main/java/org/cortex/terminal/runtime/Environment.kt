@@ -31,8 +31,6 @@ object Environment {
         val nativeLibs = getNativeLibDir(context).absolutePath
 
         val pathList = listOf(
-            "/home/.opencode/bin",
-            "$home/.opencode/bin",
             "/home/.local/bin",
             "$home/.local/bin",
             "$root/usr/local/bin",

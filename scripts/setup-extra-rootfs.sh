@@ -491,100 +491,6 @@ cat << 'EOFNANO' > extra-rootfs/usr/share/nano/default.nanorc
 syntax "default"
 EOFNANO
 chmod 0644 extra-rootfs/usr/share/nano/default.nanorc
-
-cat << 'EOFOPENCODE' > extra-rootfs/usr/local/bin/opencode
-#!/bin/bash
-mkdir -p "$HOME/.config/opencode" "$HOME/.local/share/opencode" "$HOME/.cache/opencode" 2>/dev/null || true
-if [ ! -f "$HOME/.config/opencode/opencode.json" ]; then
-    echo "{}" > "$HOME/.config/opencode/opencode.json" 2>/dev/null || true
-fi
-for cand in "$HOME/.opencode/bin/opencode" "/home/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "/home/.local/bin/opencode"; do
-    if [ -x "$cand" ] || [ -f "$cand" ]; then
-        chmod +x "$cand" 2>/dev/null || true
-        exec "$cand" "$@"
-    fi
-done
-echo "=========================================================="
-echo " OpenCode CLI is not yet installed."
-echo " Installing OpenCode CLI (high-speed native installer)..."
-echo "=========================================================="
-ARCH="$(uname -m)"
-case "$ARCH" in
-    aarch64|arm64) TARGET_ARCH="linux-arm64" ;;
-    x86_64|amd64) TARGET_ARCH="linux-x64" ;;
-    *) TARGET_ARCH="linux-arm64" ;;
-esac
-INSTALL_DIR="$HOME/.opencode/bin"
-mkdir -p "$INSTALL_DIR"
-TMP_DIR="${TMPDIR:-/tmp}/opencode_setup_$$"
-mkdir -p "$TMP_DIR"
-VERSION="0.0.0-beta-17236"
-META="$(curl -sSL --max-time 6 https://opencode.ai/update/api/latest/cli/npm 2>/dev/null || true)"
-V_CAND="$(echo "$META" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
-if [ -n "$V_CAND" ]; then VERSION="$V_CAND"; fi
-echo "Downloading OpenCode CLI v$VERSION for $TARGET_ARCH..."
-TAR_URL="https://registry.npmjs.org/@opencode/cli-$TARGET_ARCH/-/cli-$TARGET_ARCH-$VERSION.tgz"
-if ! curl -# -L -f -o "$TMP_DIR/opencode.tgz" "$TAR_URL"; then
-    curl -# -L -f -o "$TMP_DIR/opencode.tgz" "https://registry.npmjs.org/@opencode-ai/cli-$TARGET_ARCH/-/cli-$TARGET_ARCH-$VERSION.tgz" || true
-fi
-if [ -f "$TMP_DIR/opencode.tgz" ] && [ -s "$TMP_DIR/opencode.tgz" ]; then
-    tar -xzf "$TMP_DIR/opencode.tgz" -C "$TMP_DIR"
-    if [ -f "$TMP_DIR/package/bin/opencode" ]; then
-        mv -f "$TMP_DIR/package/bin/opencode" "$INSTALL_DIR/opencode"
-        chmod 755 "$INSTALL_DIR/opencode"
-        rm -rf "$TMP_DIR"
-        echo "OpenCode CLI installed successfully!"
-        exec "$INSTALL_DIR/opencode" "$@"
-    fi
-fi
-rm -rf "$TMP_DIR"
-echo "Direct install failed, trying fallback installer..."
-curl -f -# -L https://opencode.ai/v2/install | bash -s -- --no-modify-path 2>/dev/null || true
-for cand in "$HOME/.opencode/bin/opencode" "/home/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "/home/.local/bin/opencode"; do
-    if [ -x "$cand" ]; then
-        exec "$cand" "$@"
-    fi
-done
-exit 127
-EOFOPENCODE
-chmod 0755 extra-rootfs/usr/local/bin/opencode
-
-cat << 'EOFMUSE' > extra-rootfs/usr/local/bin/muse
-#!/bin/bash
-for cand in "$HOME/.local/bin/muse" "/home/.local/bin/muse" "$HOME/.local/bin/muse-bin-"* "/home/.local/bin/muse-bin-"*; do
-    if [ -x "$cand" ] || [ -f "$cand" ]; then
-        chmod +x "$cand" 2>/dev/null || true
-        exec "$cand" "$@"
-    fi
-done
-echo "=========================================================="
-echo " Meta Muse Code CLI is not yet installed."
-echo " Installing Meta Muse Code CLI..."
-echo "=========================================================="
-mkdir -p "$HOME/.local/bin"
-echo "Installing official Meta Muse Code binary via direct CDN mirror..."
-MUSE_VER="1.4.2-R4684.1"
-MUSE_URL="https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=$MUSE_VER&file=muse-aarch64-linux"
-MUSE_BIN="$HOME/.local/bin/muse-bin-$MUSE_VER"
-if curl -# -L -f -o "$MUSE_BIN" "$MUSE_URL"; then
-    chmod 755 "$MUSE_BIN"
-    echo "$MUSE_VER" > "$HOME/.local/bin/.muse-version"
-    ln -sf "muse-bin-$MUSE_VER" "$HOME/.local/bin/muse"
-    echo "Meta Muse Code CLI v$MUSE_VER installed successfully!"
-    exec "$MUSE_BIN" "$@"
-fi
-echo "Direct CDN mirror failed, trying official installer script..."
-curl -fsSL https://dev.meta.ai/install.sh 2>/dev/null | bash 2>/dev/null || true
-for cand in "$HOME/.local/bin/muse" "/home/.local/bin/muse"; do
-    if [ -x "$cand" ]; then
-        exec "$cand" "$@"
-    fi
-done
-echo "Failed to install Muse Code CLI. Please check internet connection."
-exit 127
-EOFMUSE
-chmod 0755 extra-rootfs/usr/local/bin/muse
-
 cat << 'EOFMP' > extra-rootfs/usr/local/bin/mountpoint
 #!/bin/sh
 for arg in "$@"; do
@@ -619,7 +525,7 @@ if [ -n "$CORTEX_ROOT" ]; then
     export LD_LIBRARY_PATH="$CORTEX_ROOT/lib:$CORTEX_ROOT/usr/lib:$CORTEX_ROOT/lib/aarch64-linux-gnu:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu:$CORTEX_ROOT/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf:$CORTEX_ROOT/usr/local/lib:$CORTEX_ROOT/usr/lib/systemd:$CORTEX_ROOT/lib/systemd:$CORTEX_ROOT/usr/lib/aarch64-linux-gnu/systemd:$CORTEX_ROOT/lib/aarch64-linux-gnu/systemd:$CORTEX_ROOT/usr/lib/arm-linux-gnueabihf/systemd:$CORTEX_ROOT/lib/arm-linux-gnueabihf/systemd"
     export LD_PRELOAD="$CORTEX_ROOT/usr/lib/libcortex-hook.so"
 fi
-export PATH="/home/.opencode/bin:/home/.local/bin:$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+export PATH="/home/.local/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 EOFENV
 chmod 0644 extra-rootfs/etc/profile.d/00-env.sh
 
@@ -660,4 +566,4 @@ done
 chmod 0644 extra-rootfs/var/lib/dpkg/diversions
 
 chmod 0755 extra-rootfs/usr/local/bin/*
-echo "extra-rootfs service, browser, root tools, and muse prepared successfully."
+echo "extra-rootfs service, browser, and root tools prepared successfully."
